@@ -19,27 +19,57 @@ export function initHeroAnimation() {
             this.x = Math.random() * width;
             this.y = Math.random() * height;
             this.angle = Math.random() * Math.PI * 2;
-            this.speed = 3 + Math.random() * 2;
-            this.turnSpeed = 0;
+            this.speed = 3;
             this.history = [];
-            this.maxHistory = 45 + Math.random() * 30; // Trail length varies
+            this.maxHistory = 40 + Math.random() * 40; 
             
             this.redX = this.x;
             this.redY = this.y;
+            
+            this.pickNewTarget();
+        }
+
+        pickNewTarget() {
+            this.targetX = 50 + Math.random() * (width - 100);
+            this.targetY = 50 + Math.random() * (height - 100);
+            
+            const r = Math.random();
+            if (r < 0.3) {
+                // Dash (fast, sharp turns)
+                this.targetSpeed = 7 + Math.random() * 4;
+                this.turnFlexibility = 0.1; 
+            } else if (r < 0.7) {
+                // Wander (slow, sweeping curves)
+                this.targetSpeed = 2 + Math.random() * 2;
+                this.turnFlexibility = 0.02;
+            } else {
+                // Erratic
+                this.targetSpeed = 4 + Math.random() * 3;
+                this.turnFlexibility = 0.2;
+            }
         }
 
         update() {
-            // Smooth natural wandering
-            this.turnSpeed += (Math.random() - 0.5) * 0.05;
-            this.turnSpeed = Math.max(-0.15, Math.min(0.15, this.turnSpeed));
-            this.angle += this.turnSpeed;
+            const dx = this.targetX - this.x;
+            const dy = this.targetY - this.y;
+            const dist = Math.hypot(dx, dy);
+
+            // Reached target or randomly decide to change course
+            if (dist < 50 || Math.random() < 0.01) {
+                this.pickNewTarget();
+            }
+
+            const targetAngle = Math.atan2(dy, dx);
+            let diff = targetAngle - this.angle;
             
-            // Soft boundaries to keep them on screen
-            const margin = 150;
-            if (this.x < margin) this.turnSpeed += 0.01;
-            if (this.x > width - margin) this.turnSpeed -= 0.01;
-            if (this.y < margin) this.turnSpeed += 0.01;
-            if (this.y > height - margin) this.turnSpeed -= 0.01;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+
+            // Turn towards target, adding a tiny bit of random noise for natural feeling
+            this.angle += diff * this.turnFlexibility + (Math.random() - 0.5) * 0.05;
+
+            // Smooth speed transitions
+            this.speed += (this.targetSpeed - this.speed) * 0.05;
 
             this.x += Math.cos(this.angle) * this.speed;
             this.y += Math.sin(this.angle) * this.speed;
@@ -60,7 +90,6 @@ export function initHeroAnimation() {
         draw(ctx) {
             if (this.history.length < 2) return;
 
-            // Draw fading dashed or solid trail
             ctx.save();
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
@@ -71,9 +100,6 @@ export function initHeroAnimation() {
                 const p1 = this.history[i];
                 const p2 = this.history[i+1];
                 
-                // Calculate opacity based on position in trail
-                // Tail (0) is opacity 0 (Red box is here)
-                // Head (length-1) is opacity 0.5 (Green box is here)
                 const progress = i / this.history.length;
                 ctx.strokeStyle = `rgba(60, 214, 197, ${progress * 0.6})`;
                 
@@ -84,10 +110,8 @@ export function initHeroAnimation() {
             }
             ctx.restore();
 
-            // Draw Green Square (Runner)
             ctx.save();
             ctx.translate(this.x, this.y);
-            // Slight rotation based on movement
             ctx.rotate(this.angle);
             ctx.fillStyle = '#3cd6c5';
             ctx.shadowColor = '#3cd6c5';
@@ -95,11 +119,9 @@ export function initHeroAnimation() {
             ctx.fillRect(-5, -5, 10, 10);
             ctx.restore();
 
-            // Draw Red Square (Chaser)
             ctx.save();
             ctx.translate(this.redX, this.redY);
             
-            // Joy/Delight: Red box pulses aggressively as if out of breath/eager
             const pulse = 1.5 * Math.sin(Date.now() / 100 + this.id);
             ctx.fillStyle = '#ff4d29';
             ctx.shadowColor = '#ff4d29';
@@ -109,7 +131,7 @@ export function initHeroAnimation() {
         }
     }
 
-    const numPairs = window.innerWidth > 768 ? 6 : 3; // Fewer on mobile
+    const numPairs = window.innerWidth > 768 ? 6 : 3;
     const pairs = Array.from({ length: numPairs }, (_, i) => new ChasePair(i));
 
     function animate() {
