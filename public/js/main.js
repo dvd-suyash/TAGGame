@@ -6,7 +6,6 @@ import { getMapDefinition, initPlatforms, updatePlatforms } from './map.js';
 import { initializePlayers, updateRemotePlayers, updatePlayer, checkCollisions, updateBots, initBotAI, recordPlayerInputs } from './physics.js';
 import { draw } from './render.js';
 import { initHeroAnimation } from './hero-animation.js';
-import { initHeroAnimation } from './hero-animation.js';
 
 
 initHeroAnimation();
