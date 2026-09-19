@@ -315,11 +315,12 @@ button {
     margin-top: 1.5rem;
     display: flex;
     align-items: center;
-    gap: 1rem;
+    justify-content: space-between;
+    gap: 0.5rem;
     background: rgba(0,0,0,0.5);
     padding: 0.5rem;
     border-radius: 99px;
-    width: fit-content;
+    width: 100%;
 }
 .arrow-btn {
     width: 2rem;
@@ -334,7 +335,7 @@ button {
     transition: background 0.2s;
 }
 .arrow-btn:hover { background: var(--paper); color: var(--ink); }
-.control-label { font-weight: 700; font-size: 0.875rem; letter-spacing: 0.1em; }
+.control-label { font-weight: 700; font-size: 0.875rem; letter-spacing: 0.1em; text-align: center; flex-grow: 1; }
 .hidden { display: none !important; }
 .mt-auto { margin-top: auto; }
 
