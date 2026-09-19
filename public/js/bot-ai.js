@@ -25,7 +25,7 @@ export class PathRecorder {
     record(players) {
         for (const id in players) {
             const p = players[id];
-            if (p.isBot) continue; // Only record humans
+            // Record all players so bots can chase bots
 
             if (!this.paths[id]) {
                 this.paths[id] = [];
@@ -60,7 +60,7 @@ function isGapAhead(x, botY, dir, platforms) {
     for (const p of platforms) {
         if (p.height > 50 && p.width < 50) continue;
         if (checkX + CFG.playerSize > p.x && checkX < p.x + p.width) {
-            if (p.y >= botY && p.y < botY + 150) return false;
+            if (p.y >= botY - 5 && p.y < botY + 200) return false;
         }
     }
     return true;
@@ -70,7 +70,7 @@ function isWallAhead(x, botY, dir, platforms) {
     const checkX = x + (dir * 30);
     for (const p of platforms) {
         if (checkX + CFG.playerSize > p.x && checkX < p.x + p.width) {
-            if (p.y < botY + CFG.playerSize && p.y + p.height > botY) return true;
+            if (p.y < botY + CFG.playerSize - 2 && p.y + p.height > botY + 2) return true;
         }
     }
     if (checkX < constants.MAP_BOUNDS.left || checkX + CFG.playerSize > constants.MAP_BOUNDS.right) return true;

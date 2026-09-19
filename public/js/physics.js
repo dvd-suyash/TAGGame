@@ -107,11 +107,15 @@ export function updateBots(deltaTime) {
         }
         const brain = hybridBots[bot.id];
 
-        // Find nearest human target
+        // Find nearest valid target (respecting IT roles)
         let target = null;
         let minDist = Infinity;
         Object.values(state.players).forEach(p => {
-            if (p.isBot) return; // Only target humans
+            if (p.id === bot.id) return;
+            
+            // If bot is IT, target runners. If bot is runner, target IT.
+            if (bot.isIt && p.isIt) return;
+            if (!bot.isIt && !p.isIt) return;
             
             const dx = p.x - bot.x;
             const dy = p.y - bot.y;
