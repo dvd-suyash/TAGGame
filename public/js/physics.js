@@ -9,24 +9,17 @@ import { draw, drawArenaBackground, drawBunkerArenaBackground, drawCathedralAren
 
 export function upsertPlayerState(playerData, snap = false) {
     const existing = state.players[playerData.id];
-
     if (!existing) {
         state.players[playerData.id] = {
-            ...playerData,
-            targetX: playerData.x,
-            targetY: playerData.y,
-            renderX: playerData.x,
-            renderY: playerData.y
+            ...playerData, targetX: playerData.x, targetY: playerData.y, renderX: playerData.x, renderY: playerData.y
         };
         return;
     }
-
     const targetX = playerData.x;
     const targetY = playerData.y;
     Object.assign(existing, playerData);
     existing.targetX = targetX;
     existing.targetY = targetY;
-
     if (snap || playerData.id === state.myPlayerId) {
         existing.renderX = targetX;
         existing.renderY = targetY;
@@ -69,8 +62,7 @@ export function updateRemotePlayers(deltaTime) {
     });
 }
 
-
-let actionBots = null;
+let actionBots = {};
 
 export function initBotAI() {
     actionBots = {};
@@ -78,8 +70,7 @@ export function initBotAI() {
 }
 
 export function recordPlayerInputs(dt) {
-    if (!actionBots) return;
-    // actionBots.record(state.players);
+    // Disabled
 }
 
 export function updateBots(deltaTime) {
@@ -88,26 +79,20 @@ export function updateBots(deltaTime) {
     
     const bots = Object.values(state.players).filter(p => p.isBot);
     bots.forEach((bot, botIndex) => {
-        if (!bot.aiState) bot.aiState = { jumpBufferTime: 0, coyoteTime: 0, lastX: bot.x };
-        
-        if (!actionBots[bot.id]) {
-            actionBots[bot.id] = new ActionBot();
+        if (!bot.aiState) {
+            bot.aiState = { lastJump: false, coyoteTime: 0, jumpBufferTime: 0 };
         }
-        const brain = actionBots[bot.id];
 
-        // Find nearest valid target (respecting IT roles)
         let target = null;
         let minDist = Infinity;
         Object.values(state.players).forEach(p => {
             if (p.id === bot.id) return;
-            
-            // If bot is IT, target runners. If bot is runner, target IT.
             if (bot.isIt && p.isIt) return;
             if (!bot.isIt && !p.isIt) return;
             
             const dx = p.x - bot.x;
             const dy = p.y - bot.y;
-            const dist = Math.sqrt(dx*dx + dy*dy);
+            const dist = Math.hypot(dx, dy);
             if (dist < minDist) {
                 minDist = dist;
                 target = p;
@@ -115,16 +100,16 @@ export function updateBots(deltaTime) {
         });
 
         if (target) {
-            const input = brain.think(bot, target, deltaTime, bot.isIt);
+            if (!actionBots[bot.id]) actionBots[bot.id] = new ActionBot();
+            const brain = actionBots[bot.id];
             
-                         let botKeys = { ArrowLeft: input.left, ArrowRight: input.right, ArrowUp: false };
+            if (brain) {
+                const input = brain.think(bot, target, deltaTime, bot.isIt);
+                let botKeys = { ArrowLeft: input.left, ArrowRight: input.right, ArrowUp: false };
                 
-                if (input.jump && bot.aiState.lastJump !== true) {
-                    bot.aiState.jumpBufferTime = 0.1;
-                }
+                if (input.jump && bot.aiState.lastJump !== true) bot.aiState.jumpBufferTime = 0.1;
                 bot.aiState.lastJump = input.jump;
                 
-                // Apply physics
                 const wasGrounded = bot.aiState.coyoteTime > 0;
                 const targetVelocityX = botKeys.ArrowLeft ? -constants.MOVE_SPEED : botKeys.ArrowRight ? constants.MOVE_SPEED : 0;
                 
@@ -212,7 +197,6 @@ export function updatePlayer(deltaTime) {
         player.velocityX = approach(player.velocityX, 0, friction * deltaTime);
     }
     
-    // Apply gravity
     player.velocityY += constants.GRAVITY * deltaTime;
     const moveX = player.velocityX * deltaTime;
     const moveY = player.velocityY * deltaTime;
@@ -220,22 +204,16 @@ export function updatePlayer(deltaTime) {
     const stepX = moveX / steps;
     const stepY = moveY / steps;
     let onGround = false;
-    let supportPlatform = null;
 
-    // Resolve movement in small steps so thin state.platforms behave like solid objects.
     for (let i = 0; i < steps; i++) {
         player.x += stepX;
         resolveSolidPlatformCollisions(player);
-
         player.y += stepY;
         const collisionResult = resolveSolidPlatformCollisions(player);
         onGround = collisionResult.onGround || onGround;
-        if (collisionResult.supportPlatform) {
-            supportPlatform = collisionResult.supportPlatform;
-        }
 
-        if (player.x < constants.MAP_BOUNDS.left) player.x = constants.MAP_BOUNDS.left;
-        if (player.x > constants.MAP_BOUNDS.right - constants.PLAYER_SIZE) player.x = constants.MAP_BOUNDS.right - constants.PLAYER_SIZE;
+        if (player.x < constants.MAP_BOUNDS.left) { player.x = constants.MAP_BOUNDS.left; player.velocityX = 0; }
+        if (player.x > constants.MAP_BOUNDS.right - constants.PLAYER_SIZE) { player.x = constants.MAP_BOUNDS.right - constants.PLAYER_SIZE; player.velocityX = 0; }
         if (player.y > constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE) {
             player.y = constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE;
             player.velocityY = 0;
@@ -243,33 +221,26 @@ export function updatePlayer(deltaTime) {
         }
     }
     
-    state.jumpBufferTime = Math.max(0, state.jumpBufferTime - deltaTime);
     state.coyoteTime = onGround ? constants.COYOTE_TIME_SECONDS : Math.max(0, state.coyoteTime - deltaTime);
-
     if (state.jumpBufferTime > 0 && (onGround || state.coyoteTime > 0)) {
         player.velocityY = constants.JUMP_STRENGTH;
         state.jumpBufferTime = 0;
         state.coyoteTime = 0;
-        onGround = false;
-        supportPlatform = null;
     }
+    state.jumpBufferTime = Math.max(0, state.jumpBufferTime - deltaTime);
 
-    state.supportedPlatformId = onGround && supportPlatform ? supportPlatform.id : null;
-    
-    // Send position to server
     const now = Date.now();
     if (now - lastEmitTime > 50) {
         lastEmitTime = now;
         socket.emit('playerMove', {
-        x: player.x,
-        y: player.y,
-        velocityX: player.velocityX,
-        velocityY: player.velocityY
-    });
+            x: player.x,
+            y: player.y,
+            velocityX: player.velocityX,
+            velocityY: player.velocityY
+        });
     }
 }
 
 export function checkCollisions() {
     // Server-side tagging is authoritative.
 }
-
