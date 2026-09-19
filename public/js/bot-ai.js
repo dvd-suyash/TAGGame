@@ -116,7 +116,7 @@ export class ActionBot {
 
             if (this.targetNode) {
                 this.nodeTimeout -= dt;
-                if (this.nodeTimeout <= 0) this.targetNode = null;
+                if (this.nodeTimeout <= 0) { this.targetNode = null; return { left: false, right: false, jump: false }; }
 
                 // We want to jump from slightly OUTSIDE the platform edge
                 const launchPadX = this.targetNode.x - (this.targetNode.inwardDir * 40);
