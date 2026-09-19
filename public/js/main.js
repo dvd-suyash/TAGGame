@@ -52,6 +52,17 @@ if (ui.mapCarousel) {
     });
 }
 
+
+document.getElementById('backToPlayerCountBtn')?.addEventListener('click', () => {
+    setActiveScreen('playerCountScreen');
+});
+document.getElementById('backToMapBtn')?.addEventListener('click', () => {
+    setActiveScreen('mapScreen');
+});
+document.getElementById('backToModeBtn')?.addEventListener('click', () => {
+    setActiveScreen('modeScreen');
+});
+
 ui.chooseCreateBtn.addEventListener('click', () => {
     state.selectedLobbyMode = 'create';
     updateRoomModeUI();
