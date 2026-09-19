@@ -108,25 +108,44 @@ export class HybridBot {
         const path = this.recorder.getPath(target.id);
         
         if (path.length < this.shadowDelayFrames) {
-            // Not enough history yet, stand still
             return { mode: 'physics', left: false, right: false, jump: false };
         }
 
-        // Lock on!
         if (!this.isLockedOn) {
             this.currentReadIndex = path.length - this.shadowDelayFrames;
             this.isLockedOn = true;
         }
 
-        // Advance through the path slightly faster than 1 frame per tick to catch up
-        this.currentReadIndex += 1.05; 
+        // ── SHORTCUT LOGIC (Punish human errors) ──
+        // If the player crossed their own path or hovered in one spot,
+        // we skip the loop and instantly close the time gap!
+        let bestShortcutIdx = -1;
+        const currentIdx = Math.floor(this.currentReadIndex);
         
-        // Cap it so we don't read past the present
+        // Scan the future trail (skipping at least 30 frames ahead to avoid skipping normal movement)
+        for (let i = currentIdx + 30; i < path.length; i++) {
+            const p = path[i];
+            const dist = Math.hypot(p.x - bot.x, p.y - bot.y);
+            if (dist < 25) { 
+                // Future point is physically right next to us!
+                // This means the player looped back or wasted time.
+                bestShortcutIdx = i;
+            }
+        }
+
+        if (bestShortcutIdx !== -1) {
+            // Take the shortcut! This shrinks the bot's delay, allowing it to catch the player.
+            this.currentReadIndex = bestShortcutIdx;
+        } else {
+            // Move at EXACTLY the player's speed (1.0x).
+            // The ONLY way the bot catches the player is if they make a mistake and trigger a shortcut.
+            this.currentReadIndex += 1.0; 
+        }
+        
         if (this.currentReadIndex >= path.length - 2) {
             this.currentReadIndex = path.length - 2;
         }
 
-        // Interpolate position
         const idx = Math.floor(this.currentReadIndex);
         const p1 = path[idx];
         const p2 = path[idx + 1];
