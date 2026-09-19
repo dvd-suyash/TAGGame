@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { buildNavGraph, BotBrain } from './bot-ai.js';
+import { BotBrain } from './bot-ai.js';
 import { ui } from './ui.js';
 import * as constants from './constants.js';
 import { socket } from './network.js';
@@ -80,19 +80,15 @@ export function updateRemotePlayers(deltaTime) {
 }
 
 
-let navGraph = null;
 let botBrains = {}; // keyed by bot.id
 
 export function initBotAI() {
-    // Build the navigation graph once from the current platform layout
-    navGraph = buildNavGraph(state.platforms);
     botBrains = {};
-    console.log('[Bot AI] Nav graph built:', navGraph.nodes.length, 'nodes,', navGraph.edges.length, 'edges');
+    console.log('[Bot AI] Reactive Platform Scanner initialized');
 }
 
 export function updateBots(deltaTime) {
     if (!state.isHost) return;
-    if (!navGraph) initBotAI();
     
     const bots = Object.values(state.players).filter(p => p.isBot);
     bots.forEach(bot => {
@@ -100,7 +96,7 @@ export function updateBots(deltaTime) {
         
         // Lazily create a BotBrain for each bot
         if (!botBrains[bot.id]) {
-            botBrains[bot.id] = new BotBrain(navGraph);
+            botBrains[bot.id] = new BotBrain();
         }
         const brain = botBrains[bot.id];
 

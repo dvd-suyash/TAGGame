@@ -1,343 +1,360 @@
 /**
- * Bot AI — Navigation Graph + A* Pathfinding
- * ============================================
- * Inspired by Claude's architecture but rewritten from scratch to work with
- * our exact platform format (x, y, width, height, angle, motion) and our
- * real physics constants (GRAVITY=3200, JUMP_STRENGTH=-880, MOVE_SPEED=350).
+ * Bot AI v3 — Reactive Platform Scanner
+ * ======================================
+ * Inspired by Spelunky/Celeste enemy AI and the Awesomenauts "record & playback" technique.
+ * 
+ * Instead of pre-building a fragile navigation graph, this system uses real-time
+ * platform scanning to make decisions every frame:
  *
- * Architecture:
- *   1. buildNavGraph()  — called ONCE per map load. Converts platforms into
- *      walkable nodes and jump/fall edges using real projectile simulation.
- *   2. A* pathfinding   — finds the shortest route through the graph.
- *   3. BotBrain.think() — called every frame. Returns { left, right, jump }
- *      which gets fed into the existing physics loop as virtual key presses.
+ *   1. "What platform am I standing on?"
+ *   2. "What platform is my target on?"
+ *   3. "Are we on the same platform?" → Direct chase.
+ *   4. "Target is ABOVE me?" → Find nearest reachable platform that's higher, walk to its edge, jump.
+ *   5. "Target is BELOW me?" → Walk to the nearest edge and drop off.
+ *   6. "I'm stuck?" → Jump + reverse direction.
  *
- * The bot never teleports. It only "presses buttons."
+ * The bot NEVER sets position directly. It only returns virtual key presses
+ * { left, right, jump } that get fed into the identical physics loop as the player.
+ *
+ * This approach is robust because it doesn't depend on a precomputed graph being correct.
+ * It reacts to the world as-is, every single frame.
  */
 
 import * as constants from './constants.js';
 import { state } from './state.js';
 
 // ─── CONFIG ─────────────────────────────────────────────────────────────────
-const CFG = {
-    gravity:          constants.GRAVITY,          // 3200
-    jumpVelocity:     Math.abs(constants.JUMP_STRENGTH), // 880
-    moveSpeed:        constants.MOVE_SPEED,       // 350
-    playerSize:       constants.PLAYER_SIZE,      // 26
-    landingTolerance: 18,   // px — how close a projected landing must be
-    replanInterval:   0.35, // seconds between forced path recalculations
-    reactionDelay:    0.12, // seconds — human-like delay before reacting
-    maxArcTime:       1.8,  // max seconds for a single jump/fall arc
-    arcSampleSteps:   12,   // collision check resolution along arcs
-    edgePadding:      4,    // px inward from platform edges for node placement
+const BOT_CFG = {
+    // Physics (must match constants.js exactly)
+    gravity:       constants.GRAVITY,            // 3200
+    jumpVelocity:  Math.abs(constants.JUMP_STRENGTH), // 880
+    moveSpeed:     constants.MOVE_SPEED,          // 350
+    playerSize:    constants.PLAYER_SIZE,          // 26
+
+    // Tuning
+    samePlatformYThreshold: 50,   // px — vertical tolerance for "same level"
+    stuckThreshold:         0.3,  // seconds before declaring stuck
+    stuckDistance:           2,    // px — if we moved less than this, we're stuck
+    jumpCooldown:           0.25, // seconds between jumps
+    replanInterval:         0.3,  // seconds between target re-evaluation
+    predictionAhead:        0.25, // seconds — aim ahead of target's velocity
+    edgeScanRange:          40,   // px — how close to a platform edge to trigger jump
+    maxJumpHeight:          null, // computed below
+    maxJumpDistance:        null, // computed below
 };
 
-// ─── 1. NAV GRAPH BUILDER ───────────────────────────────────────────────────
+// Pre-compute max jump reach from real physics
+// Max height: v²/(2g) where v = jumpVelocity
+BOT_CFG.maxJumpHeight = (BOT_CFG.jumpVelocity * BOT_CFG.jumpVelocity) / (2 * BOT_CFG.gravity);
+// Max horizontal distance during a full jump arc
+// Time to apex: v/g. Full flight ≈ 2 * apex time
+const timeToApex = BOT_CFG.jumpVelocity / BOT_CFG.gravity;
+const fullJumpTime = timeToApex * 2;
+BOT_CFG.maxJumpDistance = BOT_CFG.moveSpeed * fullJumpTime;
+
+
+// ─── PLATFORM HELPERS ───────────────────────────────────────────────────────
 
 /**
- * Converts our platform list into a navigation graph.
- * Each platform produces two nodes (left-edge, right-edge).
- * Edges are: walk (across a platform), jump, or fall (between platforms).
+ * Returns the platform a point is standing on, or null.
+ * A point is "on" a platform if it's within a few pixels of the top surface.
  */
-export function buildNavGraph(platforms) {
-    const nodes = [];
-    const edges = [];
-
-    // Add floor as a virtual platform spanning the whole map
-    const floorY = constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE;
-    const floorLeft = constants.MAP_BOUNDS.left;
-    const floorRight = constants.MAP_BOUNDS.right - constants.PLAYER_SIZE;
-
-    nodes.push({ id: 'floor-L', x: floorLeft, y: floorY, platformIdx: -1 });
-    nodes.push({ id: 'floor-R', x: floorRight, y: floorY, platformIdx: -1 });
-    edges.push({ from: 'floor-L', to: 'floor-R', cost: (floorRight - floorLeft) / CFG.moveSpeed, type: 'walk' });
-    edges.push({ from: 'floor-R', to: 'floor-L', cost: (floorRight - floorLeft) / CFG.moveSpeed, type: 'walk' });
-
-    // Build nodes from each platform
-    platforms.forEach((p, i) => {
-        if (p.angle && Math.abs(p.angle) > 0.01) {
-            // For angled platforms, compute the actual world-space endpoints
-            const cos = Math.cos(p.angle);
-            const sin = Math.sin(p.angle);
-            const lx = p.x + CFG.edgePadding * cos;
-            const ly = p.y + CFG.edgePadding * sin;
-            const rx = p.x + (p.width - CFG.edgePadding) * cos;
-            const ry = p.y + (p.width - CFG.edgePadding) * sin;
-            // Use the top surface (subtract player size so feet sit ON the platform)
-            nodes.push({ id: `${i}-L`, x: lx, y: ly - CFG.playerSize, platformIdx: i });
-            nodes.push({ id: `${i}-R`, x: rx, y: ry - CFG.playerSize, platformIdx: i });
-        } else {
-            // Horizontal platform
-            const topY = p.y - CFG.playerSize; // player stands ON TOP
-            nodes.push({ id: `${i}-L`, x: p.x + CFG.edgePadding, y: topY, platformIdx: i });
-            nodes.push({ id: `${i}-R`, x: p.x + p.width - CFG.edgePadding, y: topY, platformIdx: i });
-        }
-
-        const nL = nodes[nodes.length - 2];
-        const nR = nodes[nodes.length - 1];
-        const walkDist = Math.hypot(nR.x - nL.x, nR.y - nL.y);
-        edges.push({ from: nL.id, to: nR.id, cost: walkDist / CFG.moveSpeed, type: 'walk' });
-        edges.push({ from: nR.id, to: nL.id, cost: walkDist / CFG.moveSpeed, type: 'walk' });
-    });
-
-    // Test reachability between every pair of nodes on different platforms
-    for (const a of nodes) {
-        for (const b of nodes) {
-            if (a.platformIdx === b.platformIdx) continue;
-            const link = testReachability(a, b, platforms);
-            if (link) {
-                edges.push({
-                    from: a.id, to: b.id,
-                    cost: link.time + (link.type === 'jump' ? 0.05 : 0), // slight penalty for jumps
-                    type: link.type,
-                });
-            }
-        }
-    }
-
-    return { nodes, edges };
-}
-
-/**
- * Simulates a jump or fall from node A toward node B using real projectile
- * motion, and checks whether the arc lands at B without clipping platforms.
- */
-function testReachability(a, b, platforms) {
-    const dx = b.x - a.x;
-    const dir = Math.sign(dx) || 1;
-    const vx = dir * CFG.moveSpeed;
-
-    // Try both: full jump impulse, and plain walk-off-the-edge fall
-    for (const vy0 of [-CFG.jumpVelocity, 0]) {
-        const isJump = vy0 !== 0;
-        const horizontalTime = Math.abs(dx) / CFG.moveSpeed;
-        if (horizontalTime <= 0 || horizontalTime > CFG.maxArcTime) continue;
-
-        // Where does the arc end up at time t?
-        const yAtT = a.y + vy0 * horizontalTime + 0.5 * CFG.gravity * horizontalTime * horizontalTime;
-        if (Math.abs(yAtT - b.y) > CFG.landingTolerance) continue;
-
-        // Check that the arc doesn't clip through any platform
-        if (!clearArc(a, vx, vy0, horizontalTime, platforms, b.platformIdx)) continue;
-
-        return { time: horizontalTime, type: isJump ? 'jump' : 'fall' };
-    }
-    return null;
-}
-
-/**
- * Samples points along a projectile arc and rejects it if it clips
- * through a platform (other than the destination platform).
- */
-function clearArc(a, vx, vy0, totalT, platforms, destPlatformIdx) {
-    for (let i = 1; i < CFG.arcSampleSteps; i++) {
-        const t = (totalT * i) / CFG.arcSampleSteps;
-        const x = a.x + vx * t;
-        const y = a.y + vy0 * t + 0.5 * CFG.gravity * t * t;
-
-        for (let pi = 0; pi < platforms.length; pi++) {
-            if (pi === a.platformIdx || pi === destPlatformIdx) continue;
-            const p = platforms[pi];
-            // Simple AABB check for horizontal platforms
-            if (x + CFG.playerSize > p.x && x < p.x + p.width &&
-                y + CFG.playerSize > p.y && y < p.y + p.height) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-// ─── 2. A* PATHFINDING ──────────────────────────────────────────────────────
-
-function findPath(graph, startId, goalId) {
-    const adj = {};
-    graph.edges.forEach(e => (adj[e.from] ??= []).push(e));
-
-    const nodeMap = {};
-    graph.nodes.forEach(n => nodeMap[n.id] = n);
-
-    const goalNode = nodeMap[goalId];
-    if (!goalNode) return null;
-
-    const heuristic = (id) => {
-        const n = nodeMap[id];
-        return Math.hypot(n.x - goalNode.x, n.y - goalNode.y) / CFG.moveSpeed;
-    };
-
-    const openSet = new Set([startId]);
-    const cameFrom = {};
-    const gScore = { [startId]: 0 };
-    const fScore = { [startId]: heuristic(startId) };
-
-    while (openSet.size > 0) {
-        // Pick node with lowest fScore
-        let current = null;
-        let currentF = Infinity;
-        for (const id of openSet) {
-            const f = fScore[id] ?? Infinity;
-            if (f < currentF) { currentF = f; current = id; }
-        }
-
-        if (current === goalId) {
-            // Reconstruct path
-            const path = [];
-            let c = current;
-            while (cameFrom[c]) {
-                path.unshift(cameFrom[c].edge);
-                c = cameFrom[c].from;
-            }
-            return path;
-        }
-
-        openSet.delete(current);
-        for (const edge of (adj[current] || [])) {
-            const tentativeG = gScore[current] + edge.cost;
-            if (tentativeG < (gScore[edge.to] ?? Infinity)) {
-                cameFrom[edge.to] = { from: current, edge };
-                gScore[edge.to] = tentativeG;
-                fScore[edge.to] = tentativeG + heuristic(edge.to);
-                openSet.add(edge.to);
-            }
-        }
-    }
-    return null; // no path
-}
-
-// ─── 3. FIND NEAREST NODE ───────────────────────────────────────────────────
-
-function nearestNode(graph, x, y) {
+function getPlatformUnder(x, y, platforms) {
+    const footY = y + BOT_CFG.playerSize;
     let best = null;
-    let bestDist = Infinity;
-    for (const n of graph.nodes) {
-        const d = Math.hypot(x - n.x, y - n.y);
-        if (d < bestDist) { bestDist = d; best = n; }
+    let bestDist = 20; // max distance to count as "on"
+
+    for (const p of platforms) {
+        // Skip walls (thin tall platforms) — only care about walkable surfaces
+        if (p.height > 50 && p.width < 50) continue;
+
+        const topY = p.y;
+        const dist = Math.abs(footY - topY);
+
+        if (dist < bestDist && x + BOT_CFG.playerSize > p.x && x < p.x + p.width) {
+            bestDist = dist;
+            best = p;
+        }
     }
+
+    // Check floor
+    const floorY = constants.MAP_BOUNDS.bottom - BOT_CFG.playerSize;
+    if (Math.abs(y - floorY) < 10) {
+        return { id: 'floor', x: constants.MAP_BOUNDS.left, y: constants.MAP_BOUNDS.bottom, width: constants.MAP_BOUNDS.right - constants.MAP_BOUNDS.left, height: 10, isFloor: true };
+    }
+
     return best;
 }
 
-// ─── 4. BOT BRAIN ───────────────────────────────────────────────────────────
+/**
+ * Find all platforms reachable by jumping from a given position.
+ * Uses real projectile math to validate each one.
+ */
+function findReachablePlatformsAbove(botX, botY, platforms) {
+    const results = [];
+
+    for (const p of platforms) {
+        // Skip walls
+        if (p.height > 50 && p.width < 50) continue;
+
+        const platTopY = p.y - BOT_CFG.playerSize; // where feet would be
+
+        // Must be ABOVE us
+        if (platTopY >= botY - 5) continue;
+
+        // Must be within jump height
+        const heightDiff = botY - platTopY;
+        if (heightDiff > BOT_CFG.maxJumpHeight * 1.1) continue;
+
+        // Check if we can reach it horizontally
+        // Time to reach that height during jump: solve y = vy*t + 0.5*g*t²
+        // We need to reach the platform's X range during that time window
+        const platLeftX = p.x;
+        const platRightX = p.x + p.width;
+        const platCenterX = platLeftX + p.width / 2;
+
+        // Can we reach the platform's horizontal range during the jump arc?
+        const horizontalDist = Math.min(
+            Math.abs(botX - platLeftX),
+            Math.abs(botX - platRightX),
+            Math.abs(botX - platCenterX)
+        );
+
+        if (horizontalDist > BOT_CFG.maxJumpDistance * 1.2) continue;
+
+        results.push({
+            platform: p,
+            topY: platTopY,
+            centerX: platCenterX,
+            leftX: platLeftX,
+            rightX: platRightX,
+            heightDiff,
+            horizontalDist
+        });
+    }
+
+    // Sort by: prefer platforms that are closest to target vertically
+    return results;
+}
+
+/**
+ * Find the nearest edge (left or right) of the current platform.
+ * Returns { x, direction } where direction is -1 (left edge) or 1 (right edge).
+ */
+function getNearestEdge(botX, platform) {
+    if (!platform) return null;
+
+    const leftEdge = platform.x;
+    const rightEdge = platform.x + platform.width;
+    const distToLeft = Math.abs(botX - leftEdge);
+    const distToRight = Math.abs(botX - rightEdge);
+
+    if (distToLeft < distToRight) {
+        return { x: leftEdge, direction: -1 };
+    } else {
+        return { x: rightEdge, direction: 1 };
+    }
+}
+
+
+// ─── BOT BRAIN ──────────────────────────────────────────────────────────────
 
 export class BotBrain {
-    constructor(navGraph) {
-        this.graph = navGraph;
-        this.nodeMap = {};
-        navGraph.nodes.forEach(n => this.nodeMap[n.id] = n);
-        this.path = [];
-        this.timeSinceReplan = Infinity;
-        this.reactionTimer = 0;
-        this.predictX = 0;
-        this.predictY = 0;
+    constructor() {
+        this.stuckTime = 0;
+        this.lastX = 0;
+        this.lastY = 0;
+        this.jumpCooldownTimer = 0;
+        this.replanTimer = 0;
+        this.cachedTargetX = 0;
+        this.cachedTargetY = 0;
+        this.forceDirection = 0;    // -1 or 1 when panic-fleeing a stuck state
+        this.forceTimer = 0;        // how long to hold the forced direction
+        this.lastJumpInput = false;
     }
 
     /**
      * Called every frame.
-     * @param {object} bot - { x, y, velocityX, velocityY }
+     * @param {object} bot    - { x, y, velocityX, velocityY, isIt }
      * @param {object} target - { x, y, velocityX, velocityY }
-     * @param {number} dt - seconds
-     * @param {boolean} isChasing - true if bot is "it" and chasing, false if fleeing
+     * @param {number} dt     - seconds
+     * @param {boolean} isChasing - true if this bot should chase, false if flee
      * @returns {{ left: boolean, right: boolean, jump: boolean }}
      */
     think(bot, target, dt, isChasing) {
-        this.timeSinceReplan += dt;
-        this.reactionTimer -= dt;
+        this.jumpCooldownTimer = Math.max(0, this.jumpCooldownTimer - dt);
+        this.replanTimer -= dt;
 
-        // Predict where the target will be shortly
-        if (this.reactionTimer <= 0) {
-            this.predictX = target.x + (target.velocityX || 0) * 0.2;
-            this.predictY = target.y;
-            this.reactionTimer = CFG.reactionDelay;
+        // ── Predict target position ──
+        if (this.replanTimer <= 0) {
+            this.cachedTargetX = target.x + (target.velocityX || 0) * BOT_CFG.predictionAhead;
+            this.cachedTargetY = target.y;
+            this.replanTimer = BOT_CFG.replanInterval;
         }
 
-        const targetX = isChasing ? this.predictX : this.getFleeX(bot, target);
-        const targetY = isChasing ? this.predictY : bot.y;
+        const targetX = isChasing ? this.cachedTargetX : this._getFleeX(bot, target);
+        const targetY = isChasing ? this.cachedTargetY : bot.y;
 
-        // Check if bot and target are on the same platform (within ~40px vertically)
-        const samePlatform = Math.abs(bot.y - target.y) < 40;
-
-        // Replan if needed
-        if (!samePlatform && (this.timeSinceReplan > CFG.replanInterval || this.path.length === 0)) {
-            const startNode = nearestNode(this.graph, bot.x, bot.y);
-            const goalNode = nearestNode(this.graph, targetX, targetY);
-            if (startNode && goalNode && startNode.id !== goalNode.id) {
-                this.path = findPath(this.graph, startNode.id, goalNode.id) || [];
-            }
-            this.timeSinceReplan = 0;
-        }
-
-        // If same platform or no path, direct chase/flee
-        if (samePlatform || this.path.length === 0) {
-            return this.directMove(bot, targetX);
-        }
-
-        return this.followPath(bot);
-    }
-
-    getFleeX(bot, target) {
-        // Flee to the opposite side of the map
-        const dx = bot.x - target.x;
-        const mapCenter = (constants.MAP_BOUNDS.left + constants.MAP_BOUNDS.right) / 2;
-        if (dx > 0) {
-            return Math.min(bot.x + 300, constants.MAP_BOUNDS.right - CFG.playerSize);
+        // ── Stuck detection ──
+        const moved = Math.hypot(bot.x - this.lastX, bot.y - this.lastY);
+        if (moved < BOT_CFG.stuckDistance) {
+            this.stuckTime += dt;
         } else {
-            return Math.max(bot.x - 300, constants.MAP_BOUNDS.left);
+            this.stuckTime = 0;
         }
-    }
+        this.lastX = bot.x;
+        this.lastY = bot.y;
 
-    directMove(bot, targetX) {
-        const dx = targetX - bot.x;
-        if (Math.abs(dx) < 6) return { left: false, right: false, jump: false };
-        return {
-            left: dx < 0,
-            right: dx > 0,
-            jump: false,
-        };
-    }
-
-    followPath(bot) {
-        const edge = this.path[0];
-        if (!edge) return { left: false, right: false, jump: false };
-
-        const targetNode = this.nodeMap[edge.to];
-        const fromNode = this.nodeMap[edge.from];
-        if (!targetNode || !fromNode) {
-            this.path.shift();
-            return { left: false, right: false, jump: false };
-        }
-
-        // Check if we've arrived at the target node
-        const distToTarget = Math.hypot(bot.x - targetNode.x, bot.y - targetNode.y);
-        if (distToTarget < 20) {
-            this.path.shift();
-            if (this.path.length === 0) return { left: false, right: false, jump: false };
-            return this.followPath(bot); // immediately process next edge
-        }
-
-        if (edge.type === 'walk') {
-            // Walk toward the target node
-            const dx = targetNode.x - bot.x;
-            return { left: dx < 0, right: dx > 0, jump: false };
-        }
-
-        // Jump or fall edge: walk to the launch point first
-        const distToLaunch = Math.hypot(bot.x - fromNode.x, bot.y - fromNode.y);
-        const moveDir = Math.sign(targetNode.x - bot.x);
-
-        if (distToLaunch < 12) {
-            // At launch point — execute the jump/fall
+        // ── Force timer (panic mode) ──
+        if (this.forceTimer > 0) {
+            this.forceTimer -= dt;
+            const jump = this.jumpCooldownTimer <= 0 && Math.random() < 0.15;
+            if (jump) this.jumpCooldownTimer = BOT_CFG.jumpCooldown;
             return {
-                left: moveDir < 0,
-                right: moveDir > 0,
-                jump: edge.type === 'jump',
+                left: this.forceDirection < 0,
+                right: this.forceDirection > 0,
+                jump,
             };
         }
 
-        // Walk to launch point
-        const dxToLaunch = fromNode.x - bot.x;
-        return {
-            left: dxToLaunch < 0,
-            right: dxToLaunch > 0,
-            jump: false,
-        };
+        // ── If stuck for too long, PANIC: reverse + jump ──
+        if (this.stuckTime > BOT_CFG.stuckThreshold) {
+            this.stuckTime = 0;
+            // Reverse direction and force it for a bit
+            const currentDir = Math.sign(targetX - bot.x) || 1;
+            this.forceDirection = -currentDir;
+            this.forceTimer = 0.4 + Math.random() * 0.3; // 0.4-0.7s
+            return { left: false, right: false, jump: true };
+        }
+
+        // ── Platform awareness ──
+        const botPlatform = getPlatformUnder(bot.x, bot.y, state.platforms);
+        const targetPlatform = getPlatformUnder(target.x, target.y, state.platforms);
+
+        const dx = targetX - bot.x;
+        const dy = targetY - bot.y;
+        const samePlatform = botPlatform && targetPlatform &&
+            (botPlatform === targetPlatform || botPlatform.id === targetPlatform.id);
+        const sameLevel = Math.abs(dy) < BOT_CFG.samePlatformYThreshold;
+
+        // ──────────────────────────────────────────────────────────────────
+        // CASE 1: Same platform or same vertical level → DIRECT CHASE
+        // ──────────────────────────────────────────────────────────────────
+        if (samePlatform || sameLevel) {
+            return {
+                left: dx < -6,
+                right: dx > 6,
+                jump: false,
+            };
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // CASE 2: Target is ABOVE us → Find a way UP
+        // ──────────────────────────────────────────────────────────────────
+        if (dy < -BOT_CFG.samePlatformYThreshold) {
+            return this._navigateUp(bot, target, targetX, targetY, botPlatform);
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // CASE 3: Target is BELOW us → Walk off edge to drop down
+        // ──────────────────────────────────────────────────────────────────
+        if (dy > BOT_CFG.samePlatformYThreshold) {
+            return this._navigateDown(bot, targetX, botPlatform);
+        }
+
+        // Fallback: chase directly
+        return { left: dx < 0, right: dx > 0, jump: false };
+    }
+
+    /**
+     * Navigate upward: find reachable platforms above and jump to the best one.
+     */
+    _navigateUp(bot, target, targetX, targetY, botPlatform) {
+        const reachable = findReachablePlatformsAbove(bot.x, bot.y, state.platforms);
+
+        if (reachable.length === 0) {
+            // Can't find any reachable platform above. Just chase horizontally
+            // and hope we find a better position.
+            const dx = targetX - bot.x;
+            const shouldJump = this.jumpCooldownTimer <= 0;
+            if (shouldJump) this.jumpCooldownTimer = BOT_CFG.jumpCooldown;
+            return { left: dx < 0, right: dx > 0, jump: shouldJump };
+        }
+
+        // Score each reachable platform: prefer the one closest to the target
+        let bestPlatform = null;
+        let bestScore = Infinity;
+
+        for (const rp of reachable) {
+            // Score = distance from this platform's center to the target
+            const distToTarget = Math.hypot(rp.centerX - targetX, rp.topY - targetY);
+            // Penalize platforms that are far horizontally (harder jumps)
+            const score = distToTarget + rp.horizontalDist * 0.5;
+            if (score < bestScore) {
+                bestScore = score;
+                bestPlatform = rp;
+            }
+        }
+
+        if (!bestPlatform) {
+            return { left: targetX < bot.x, right: targetX > bot.x, jump: false };
+        }
+
+        // Strategy: walk toward the nearest edge of the target platform, then jump
+        const jumpTargetX = bot.x < bestPlatform.centerX ? bestPlatform.leftX : bestPlatform.rightX;
+        const dx = jumpTargetX - bot.x;
+
+        // Are we roughly underneath the target platform? → JUMP!
+        const underPlatform = bot.x + BOT_CFG.playerSize > bestPlatform.leftX - 30 &&
+                              bot.x < bestPlatform.rightX + 30;
+
+        if (underPlatform || Math.abs(dx) < BOT_CFG.edgeScanRange) {
+            const shouldJump = this.jumpCooldownTimer <= 0;
+            if (shouldJump) this.jumpCooldownTimer = BOT_CFG.jumpCooldown;
+            return {
+                left: dx < 0,
+                right: dx > 0,
+                jump: shouldJump,
+            };
+        }
+
+        // Walk toward the platform
+        return { left: dx < 0, right: dx > 0, jump: false };
+    }
+
+    /**
+     * Navigate downward: walk toward the nearest edge and fall off.
+     */
+    _navigateDown(bot, targetX, botPlatform) {
+        if (!botPlatform || botPlatform.isFloor) {
+            // Already on the floor, can't go lower. Chase horizontally.
+            return { left: targetX < bot.x, right: targetX > bot.x, jump: false };
+        }
+
+        // Find the edge of our current platform that's closest to the target
+        const leftEdge = botPlatform.x;
+        const rightEdge = botPlatform.x + botPlatform.width;
+        const distToLeft = Math.abs(bot.x - leftEdge);
+        const distToRight = Math.abs(bot.x - rightEdge);
+
+        // Prefer the edge that's in the direction of the target
+        let targetEdge;
+        if (targetX < botPlatform.x + botPlatform.width / 2) {
+            targetEdge = leftEdge - 10; // walk slightly past the edge to fall off
+        } else {
+            targetEdge = rightEdge + 10;
+        }
+
+        const dx = targetEdge - bot.x;
+        return { left: dx < 0, right: dx > 0, jump: false };
+    }
+
+    _getFleeX(bot, target) {
+        const dx = bot.x - target.x;
+        if (dx > 0) {
+            return Math.min(bot.x + 250, constants.MAP_BOUNDS.right - BOT_CFG.playerSize);
+        } else {
+            return Math.max(bot.x - 250, constants.MAP_BOUNDS.left);
+        }
     }
 }
