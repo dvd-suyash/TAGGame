@@ -3,7 +3,7 @@ import { ui, setActiveScreen, showError, showRoundBanner, hideRoundBanner, updat
 import * as constants from './constants.js';
 import { socket } from './network.js';
 import { getMapDefinition, initPlatforms, updatePlatforms } from './map.js';
-import { initializePlayers, updateRemotePlayers, updatePlayer, checkCollisions, updateBots } from './physics.js';
+import { initializePlayers, updateRemotePlayers, updatePlayer, checkCollisions, updateBots, initBotAI } from './physics.js';
 import { draw } from './render.js';
 
 // Setup basic map definitions array for host to cycle through
