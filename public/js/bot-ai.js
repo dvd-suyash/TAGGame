@@ -173,6 +173,47 @@ export class HybridBot {
         this.isLockedOn = false; // Break shadow lock when we stop chasing
         this.jumpCooldown -= dt;
 
+        // ── Escape State Machine ──
+        let targetX;
+        if (this.escaping) {
+            targetX = this.escapeTargetX;
+            // If we have safely passed the target, stop escaping
+            if (Math.sign(bot.x - target.x) === Math.sign(this.escapeTargetX - target.x)) {
+                if (Math.abs(bot.x - target.x) > 100) {
+                    this.escaping = false;
+                }
+            }
+        } else {
+            // Normal flee: run away from target
+            const dx = bot.x - target.x;
+            targetX = dx >= 0 ? constants.MAP_BOUNDS.right : constants.MAP_BOUNDS.left;
+        }
+        
+        // Are we trapped against a wall while trying to reach targetX?
+        const moveDir = targetX > bot.x ? 1 : -1;
+        
+        if (!this.escaping && isWallAhead(bot.x, bot.y, moveDir, state.platforms)) {
+            // We hit a wall (e.g. map edge). Break out!
+            this.escaping = true;
+            this.escapeTargetX = moveDir === -1 ? constants.MAP_BOUNDS.right : constants.MAP_BOUNDS.left;
+        }
+
+        // Steer towards targetX
+        const finalMoveDir = targetX > bot.x ? 1 : -1;
+        let shouldJump = false;
+
+        // Basic obstacle avoidance
+        if (isWallAhead(bot.x, bot.y, finalMoveDir, state.platforms)) {
+            shouldJump = true;
+        }
+        if (isGapAhead(bot.x, bot.y, finalMoveDir, state.platforms)) {
+            // If the target is below us, let's fall to the lower level to escape!
+            if (target.y <= bot.y + 30) {
+                shouldJump = true; // jump over gap
+            }
+        }
+        
+        // Panic stuck logic
         if (Math.abs(bot.x - this.lastX) < 1) {
             this.stuckTime += dt;
         } else {
@@ -180,34 +221,20 @@ export class HybridBot {
         }
         this.lastX = bot.x;
 
-        if (this.stuckTime > 0.2) {
-            this.fleeDir *= -1;
+        if (this.stuckTime > 0.4) {
+            shouldJump = true;
             this.stuckTime = 0;
-            return { mode: 'physics', left: this.fleeDir < 0, right: this.fleeDir > 0, jump: true };
-        }
-
-        let targetX = bot.x + this.fleeDir * 100;
-        
-        // If approaching target, reverse
-        if (Math.abs(target.x - targetX) < Math.abs(target.x - bot.x)) {
-            this.fleeDir *= -1;
-            targetX = bot.x + this.fleeDir * 100;
-        }
-
-        let shouldJump = false;
-        if (isWallAhead(bot.x, bot.y, this.fleeDir, state.platforms)) {
-            shouldJump = true;
-        }
-        if (isGapAhead(bot.x, bot.y, this.fleeDir, state.platforms) && target.y <= bot.y + 30) {
-            shouldJump = true;
+            this.escaping = true;
+            this.escapeTargetX = finalMoveDir > 0 ? constants.MAP_BOUNDS.left : constants.MAP_BOUNDS.right;
         }
 
         if (shouldJump && this.jumpCooldown <= 0) {
-            this.jumpCooldown = 0.2;
+            this.jumpCooldown = 0.25;
         } else if (shouldJump) {
             shouldJump = false;
         }
 
-        return { mode: 'physics', left: this.fleeDir < 0, right: this.fleeDir > 0, jump: shouldJump };
+        const runDx = targetX - bot.x;
+        return { mode: 'physics', left: runDx < -5, right: runDx > 5, jump: shouldJump };
     }
 }
