@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { BotBrain } from './bot-ai.js';
+import { InputTrail, ShadowBotBrain } from './bot-ai.js';
 import { ui } from './ui.js';
 import * as constants from './constants.js';
 import { socket } from './network.js';
@@ -80,56 +80,56 @@ export function updateRemotePlayers(deltaTime) {
 }
 
 
-let botBrains = {}; // keyed by bot.id
+let inputTrail = null;     // shared trail recorder
+let shadowBrains = {};     // keyed by bot.id
 
 export function initBotAI() {
-    botBrains = {};
-    console.log('[Bot AI] Reactive Platform Scanner initialized');
+    inputTrail = new InputTrail();
+    shadowBrains = {};
+    console.log('[Bot AI] Shadow Trail system initialized');
+}
+
+/**
+ * Record the player's inputs every frame.
+ * Must be called from the game loop BEFORE updateBots.
+ */
+export function recordPlayerInputs(dt) {
+    if (!inputTrail) return;
+    inputTrail.record(state.keys, dt);
 }
 
 export function updateBots(deltaTime) {
     if (!state.isHost) return;
+    if (!inputTrail) initBotAI();
     
     const bots = Object.values(state.players).filter(p => p.isBot);
-    bots.forEach(bot => {
+    bots.forEach((bot, botIndex) => {
         if (!bot.aiState) bot.aiState = { jumpBufferTime: 0, coyoteTime: 0, lastX: bot.x };
         
-        // Lazily create a BotBrain for each bot
-        if (!botBrains[bot.id]) {
-            botBrains[bot.id] = new BotBrain();
+        // Lazily create a ShadowBotBrain with staggered delays
+        if (!shadowBrains[bot.id]) {
+            // Each bot follows at a slightly different delay so they don't stack
+            const delayOffset = botIndex * 1.0; // 1 second apart
+            shadowBrains[bot.id] = new ShadowBotBrain(inputTrail, delayOffset);
         }
-        const brain = botBrains[bot.id];
+        const brain = shadowBrains[bot.id];
 
-        // Find the target (nearest enemy)
+        // Find the target (for reference, though shadow bot mostly ignores it)
         let target = null;
-        let minDist = Infinity;
         Object.values(state.players).forEach(p => {
-            if (p.id === bot.id) return;
-            if (bot.isIt && p.isIt) return;
-            if (!bot.isIt && !p.isIt) return;
-            
-            const dx = p.x - bot.x;
-            const dy = p.y - bot.y;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist < minDist) {
-                minDist = dist;
-                target = p;
-            }
+            if (p.id === bot.id || p.isBot) return;
+            target = p;
         });
 
-        // Default: no input
-        let botKeys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false };
-
-        if (target) {
-            const input = brain.think(bot, target, deltaTime, bot.isIt);
-            botKeys.ArrowLeft = input.left;
-            botKeys.ArrowRight = input.right;
-            
-            if (input.jump && bot.aiState.lastJump !== true) {
-                bot.aiState.jumpBufferTime = 0.1;
-            }
-            bot.aiState.lastJump = input.jump;
+        // Get replayed inputs from the trail
+        const input = brain.think(bot, target, deltaTime);
+        
+        let botKeys = { ArrowLeft: input.left, ArrowRight: input.right, ArrowUp: false };
+        
+        if (input.jump && bot.aiState.lastJump !== true) {
+            bot.aiState.jumpBufferTime = 0.1;
         }
+        bot.aiState.lastJump = input.jump;
         
         // --- PHYSICS (identical to player physics) ---
         const wasGrounded = bot.aiState.coyoteTime > 0;
