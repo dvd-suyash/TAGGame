@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { PathRecorder, HybridBot } from './bot-ai.js';
+import { ActionBot } from './bot-ai.js';
 import { ui } from './ui.js';
 import * as constants from './constants.js';
 import { socket } from './network.js';
@@ -70,32 +70,32 @@ export function updateRemotePlayers(deltaTime) {
 }
 
 
-let pathRecorder = null;
-let hybridBots = {};
+let actionBots = null;
+let actionBots = {};
 
 export function initBotAI() {
-    pathRecorder = new PathRecorder();
-    hybridBots = {};
-    console.log('[Bot AI] Hybrid Shadow Tracker initialized');
+    actionBots = new PathRecorder();
+    actionBots = {};
+    console.log('[Bot AI] Pure Action Sensor initialized');
 }
 
 export function recordPlayerInputs(dt) {
-    if (!pathRecorder) return;
-    pathRecorder.record(state.players);
+    if (!actionBots) return;
+    // actionBots.record(state.players);
 }
 
 export function updateBots(deltaTime) {
     if (!state.isHost) return;
-    if (!pathRecorder) initBotAI();
+    if (!actionBots) initBotAI();
     
     const bots = Object.values(state.players).filter(p => p.isBot);
     bots.forEach((bot, botIndex) => {
         if (!bot.aiState) bot.aiState = { jumpBufferTime: 0, coyoteTime: 0, lastX: bot.x };
         
-        if (!hybridBots[bot.id]) {
-            hybridBots[bot.id] = new HybridBot(pathRecorder, botIndex);
+        if (!actionBots[bot.id]) {
+            actionBots[bot.id] = new ActionBot();
         }
-        const brain = hybridBots[bot.id];
+        const brain = actionBots[bot.id];
 
         // Find nearest valid target (respecting IT roles)
         let target = null;
@@ -119,18 +119,7 @@ export function updateBots(deltaTime) {
         if (target) {
             const input = brain.think(bot, target, deltaTime, bot.isIt);
             
-            if (input.mode === 'shadow') {
-                // Perfect physical override
-                bot.x = input.x;
-                bot.y = input.y;
-                bot.velocityX = input.velocityX;
-                bot.velocityY = input.velocityY;
-                
-                // Keep animation states updated
-                bot.aiState.coyoteTime = 0.1; 
-            } else {
-                // Physics mode
-                let botKeys = { ArrowLeft: input.left, ArrowRight: input.right, ArrowUp: false };
+                         let botKeys = { ArrowLeft: input.left, ArrowRight: input.right, ArrowUp: false };
                 
                 if (input.jump && bot.aiState.lastJump !== true) {
                     bot.aiState.jumpBufferTime = 0.1;

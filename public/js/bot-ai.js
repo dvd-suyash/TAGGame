@@ -1,57 +1,31 @@
 /**
- * Bot AI v7 — Hybrid Shadow Tracker
- * =================================
- * As requested: "completely follow the user's character. fully."
- * 
- * - When CHASING (IT): The bot snaps to the player's historical path queue 
- *   and replays their exact physical coordinates at a slightly faster speed (1.05x).
- *   This creates a terrifying, flawless, neck-and-neck pursuit that cannot get stuck.
- * 
- * - When FLEEING (Runner): The bot uses Raycast Sensor steering to run away 
- *   and avoid obstacles dynamically.
+ * Bot AI v8 — Pure Action Sensor
+ * ==============================
+ * Chasing: Direct, relentless pursuit using spatial raycasts. Skips player paths/errors and goes straight for the kill.
+ * Fleeing: Runs away, uses Escape State Machine to break out of corners and run past the chaser.
  */
 
 import * as constants from './constants.js';
 import { state } from './state.js';
 
-// ─── PLAYER PATH RECORDER ───────────────────────────────────────────────────
+const CFG = { playerSize: 26 };
 
-export class PathRecorder {
-    constructor() {
-        this.paths = {}; // keyed by player.id
-        this.maxFrames = 600; // 10 seconds at 60fps
-    }
-
-    record(players) {
-        for (const id in players) {
-            const p = players[id];
-            // Record all players so bots can chase bots
-
-            if (!this.paths[id]) {
-                this.paths[id] = [];
-            }
-
-            this.paths[id].push({
-                x: p.x,
-                y: p.y,
-                velocityX: p.velocityX,
-                velocityY: p.velocityY
-            });
-
-            if (this.paths[id].length > this.maxFrames) {
-                this.paths[id].shift();
+function getCeiling(x, botY, targetY, platforms) {
+    let lowestY = -Infinity;
+    let lowestCeiling = null;
+    for (const p of platforms) {
+        if (p.height > 50 && p.width < 50) continue; 
+        if (x + CFG.playerSize > p.x && x < p.x + p.width) {
+            if (p.y < botY && p.y >= targetY - 10) {
+                if (p.y > lowestY) {
+                    lowestY = p.y;
+                    lowestCeiling = p;
+                }
             }
         }
     }
-    
-    getPath(id) {
-        return this.paths[id] || [];
-    }
+    return lowestCeiling;
 }
-
-// ─── SENSOR FLEE LOGIC (from v6) ────────────────────────────────────────────
-
-const CFG = { playerSize: 26 };
 
 function isGapAhead(x, botY, dir, platforms) {
     const checkX = x + (dir * 45);
@@ -60,7 +34,7 @@ function isGapAhead(x, botY, dir, platforms) {
     for (const p of platforms) {
         if (p.height > 50 && p.width < 50) continue;
         if (checkX + CFG.playerSize > p.x && checkX < p.x + p.width) {
-            if (p.y >= botY - 5 && p.y < botY + 200) return false;
+            if (p.y >= botY - 5 && p.y < botY + 150) return false;
         }
     }
     return true;
@@ -68,152 +42,28 @@ function isGapAhead(x, botY, dir, platforms) {
 
 function isWallAhead(x, botY, dir, platforms) {
     const checkX = x + (dir * 30);
+    const botBottom = botY + CFG.playerSize - 2; 
     for (const p of platforms) {
         if (checkX + CFG.playerSize > p.x && checkX < p.x + p.width) {
-            if (p.y < botY + CFG.playerSize - 2 && p.y + p.height > botY + 2) return true;
+            if (p.y < botBottom && p.y + p.height > botY + 2) return true;
         }
     }
     if (checkX < constants.MAP_BOUNDS.left || checkX + CFG.playerSize > constants.MAP_BOUNDS.right) return true;
     return false;
 }
 
-// ─── BOT BRAIN ──────────────────────────────────────────────────────────────
-
-export class HybridBot {
-    constructor(recorder, botIndex) {
-        this.recorder = recorder;
-        this.botIndex = botIndex;
-        
-        // Shadow Chasing State
-        this.shadowDelayFrames = 60 + (botIndex * 30); // Base 1s delay, +0.5s per bot
-        this.currentReadIndex = 0;
-        this.isLockedOn = false;
-        
-        // Fleeing State
+export class ActionBot {
+    constructor() {
         this.jumpCooldown = 0;
-        this.fleeDir = Math.random() < 0.5 ? 1 : -1;
         this.stuckTime = 0;
         this.lastX = 0;
+        this.escaping = false;
+        this.escapeTargetX = 0;
     }
 
     think(bot, target, dt, isChasing) {
-        if (isChasing) {
-            return this._chaseShadow(bot, target);
-        } else {
-            return this._fleeSensors(bot, target, dt);
-        }
-    }
-
-    _chaseShadow(bot, target) {
-        const path = this.recorder.getPath(target.id);
-        
-        if (path.length < this.shadowDelayFrames) {
-            return { mode: 'physics', left: false, right: false, jump: false };
-        }
-
-        if (!this.isLockedOn) {
-            this.currentReadIndex = path.length - this.shadowDelayFrames;
-            this.isLockedOn = true;
-        }
-
-        // ── SHORTCUT LOGIC (Punish human errors) ──
-        // If the player crossed their own path or hovered in one spot,
-        // we skip the loop and instantly close the time gap!
-        let bestShortcutIdx = -1;
-        const currentIdx = Math.floor(this.currentReadIndex);
-        
-        // Scan the future trail (skipping at least 30 frames ahead to avoid skipping normal movement)
-        for (let i = currentIdx + 30; i < path.length; i++) {
-            const p = path[i];
-            const dist = Math.hypot(p.x - bot.x, p.y - bot.y);
-            if (dist < 25) { 
-                // Future point is physically right next to us!
-                // This means the player looped back or wasted time.
-                bestShortcutIdx = i;
-            }
-        }
-
-        if (bestShortcutIdx !== -1) {
-            // Take the shortcut! This shrinks the bot's delay, allowing it to catch the player.
-            this.currentReadIndex = bestShortcutIdx;
-        } else {
-            // Move at EXACTLY the player's speed (1.0x).
-            // The ONLY way the bot catches the player is if they make a mistake and trigger a shortcut.
-            this.currentReadIndex += 1.0; 
-        }
-        
-        if (this.currentReadIndex >= path.length - 2) {
-            this.currentReadIndex = path.length - 2;
-        }
-
-        const idx = Math.floor(this.currentReadIndex);
-        const p1 = path[idx];
-        const p2 = path[idx + 1];
-        const fraction = this.currentReadIndex - idx;
-
-        if (p1 && p2) {
-            const newX = p1.x + (p2.x - p1.x) * fraction;
-            const newY = p1.y + (p2.y - p1.y) * fraction;
-            const newVx = p1.velocityX + (p2.velocityX - p1.velocityX) * fraction;
-            const newVy = p1.velocityY + (p2.velocityY - p1.velocityY) * fraction;
-            
-            return {
-                mode: 'shadow',
-                x: newX,
-                y: newY,
-                velocityX: newVx,
-                velocityY: newVy
-            };
-        }
-
-        return { mode: 'physics', left: false, right: false, jump: false };
-    }
-
-    _fleeSensors(bot, target, dt) {
-        this.isLockedOn = false; // Break shadow lock when we stop chasing
         this.jumpCooldown -= dt;
 
-        // ── Escape State Machine ──
-        let targetX;
-        if (this.escaping) {
-            targetX = this.escapeTargetX;
-            // If we have safely passed the target, stop escaping
-            if (Math.sign(bot.x - target.x) === Math.sign(this.escapeTargetX - target.x)) {
-                if (Math.abs(bot.x - target.x) > 100) {
-                    this.escaping = false;
-                }
-            }
-        } else {
-            // Normal flee: run away from target
-            const dx = bot.x - target.x;
-            targetX = dx >= 0 ? constants.MAP_BOUNDS.right : constants.MAP_BOUNDS.left;
-        }
-        
-        // Are we trapped against a wall while trying to reach targetX?
-        const moveDir = targetX > bot.x ? 1 : -1;
-        
-        if (!this.escaping && isWallAhead(bot.x, bot.y, moveDir, state.platforms)) {
-            // We hit a wall (e.g. map edge). Break out!
-            this.escaping = true;
-            this.escapeTargetX = moveDir === -1 ? constants.MAP_BOUNDS.right : constants.MAP_BOUNDS.left;
-        }
-
-        // Steer towards targetX
-        const finalMoveDir = targetX > bot.x ? 1 : -1;
-        let shouldJump = false;
-
-        // Basic obstacle avoidance
-        if (isWallAhead(bot.x, bot.y, finalMoveDir, state.platforms)) {
-            shouldJump = true;
-        }
-        if (isGapAhead(bot.x, bot.y, finalMoveDir, state.platforms)) {
-            // If the target is below us, let's fall to the lower level to escape!
-            if (target.y <= bot.y + 30) {
-                shouldJump = true; // jump over gap
-            }
-        }
-        
-        // Panic stuck logic
         if (Math.abs(bot.x - this.lastX) < 1) {
             this.stuckTime += dt;
         } else {
@@ -221,6 +71,80 @@ export class HybridBot {
         }
         this.lastX = bot.x;
 
+        if (isChasing) {
+            return this._chase(bot, target, dt);
+        } else {
+            return this._flee(bot, target, dt);
+        }
+    }
+
+    _chase(bot, target, dt) {
+        let targetX = target.x + (target.velocityX || 0) * 0.15; // Predict slightly
+        let shouldJump = false;
+
+        // Stuck Panic
+        if (this.stuckTime > 0.3) {
+            shouldJump = true;
+            this.stuckTime = 0;
+            targetX = bot.x + (Math.random() < 0.5 ? 100 : -100);
+        }
+
+        // Ceiling Evader
+        if (target.y < bot.y - 20) {
+            const ceiling = getCeiling(bot.x, bot.y, target.y, state.platforms);
+            if (ceiling) {
+                const leftDist = bot.x - ceiling.x;
+                const rightDist = (ceiling.x + ceiling.width) - bot.x;
+                targetX = leftDist < rightDist ? ceiling.x - 20 : ceiling.x + ceiling.width + 20;
+            } else if (Math.abs(targetX - bot.x) < 80) {
+                shouldJump = true;
+            }
+        }
+
+        const moveDir = targetX > bot.x ? 1 : -1;
+        
+        if (isWallAhead(bot.x, bot.y, moveDir, state.platforms)) shouldJump = true;
+        if (isGapAhead(bot.x, bot.y, moveDir, state.platforms) && target.y <= bot.y + 30) shouldJump = true;
+
+        if (shouldJump && this.jumpCooldown <= 0) {
+            this.jumpCooldown = 0.25;
+        } else if (shouldJump) {
+            shouldJump = false;
+        }
+
+        const dx = targetX - bot.x;
+        return { mode: 'physics', left: dx < -5, right: dx > 5, jump: shouldJump };
+    }
+
+    _flee(bot, target, dt) {
+        let targetX;
+        
+        // Escape State Machine
+        if (this.escaping) {
+            targetX = this.escapeTargetX;
+            if (Math.sign(bot.x - target.x) === Math.sign(this.escapeTargetX - target.x) && Math.abs(bot.x - target.x) > 100) {
+                this.escaping = false;
+            }
+        } else {
+            targetX = bot.x > target.x ? constants.MAP_BOUNDS.right : constants.MAP_BOUNDS.left;
+        }
+        
+        const moveDir = targetX > bot.x ? 1 : -1;
+        
+        // Break out of corners
+        if (!this.escaping && isWallAhead(bot.x, bot.y, moveDir, state.platforms)) {
+            this.escaping = true;
+            this.escapeTargetX = moveDir === -1 ? constants.MAP_BOUNDS.right : constants.MAP_BOUNDS.left;
+        }
+
+        const finalMoveDir = targetX > bot.x ? 1 : -1;
+        let shouldJump = false;
+
+        // Obstacle avoidance
+        if (isWallAhead(bot.x, bot.y, finalMoveDir, state.platforms)) shouldJump = true;
+        if (isGapAhead(bot.x, bot.y, finalMoveDir, state.platforms) && target.y <= bot.y + 30) shouldJump = true;
+        
+        // Stuck Panic
         if (this.stuckTime > 0.4) {
             shouldJump = true;
             this.stuckTime = 0;
