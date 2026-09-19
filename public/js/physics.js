@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { SensorBot } from './bot-ai.js';
+import { PathRecorder, HybridBot } from './bot-ai.js';
 import { ui } from './ui.js';
 import * as constants from './constants.js';
 import { socket } from './network.js';
@@ -80,35 +80,38 @@ export function updateRemotePlayers(deltaTime) {
 }
 
 
-let sensorBots = {};
+let pathRecorder = null;
+let hybridBots = {};
 
 export function initBotAI() {
-    sensorBots = {};
-    console.log('[Bot AI] Sensor Steering initialized');
+    pathRecorder = new PathRecorder();
+    hybridBots = {};
+    console.log('[Bot AI] Hybrid Shadow Tracker initialized');
 }
 
 export function recordPlayerInputs(dt) {
-    // Unused in Sensor AI
+    if (!pathRecorder) return;
+    pathRecorder.record(state.players);
 }
 
 export function updateBots(deltaTime) {
     if (!state.isHost) return;
+    if (!pathRecorder) initBotAI();
     
     const bots = Object.values(state.players).filter(p => p.isBot);
-    bots.forEach(bot => {
+    bots.forEach((bot, botIndex) => {
         if (!bot.aiState) bot.aiState = { jumpBufferTime: 0, coyoteTime: 0, lastX: bot.x };
         
-        if (!sensorBots[bot.id]) {
-            sensorBots[bot.id] = new SensorBot();
+        if (!hybridBots[bot.id]) {
+            hybridBots[bot.id] = new HybridBot(pathRecorder, botIndex);
         }
-        const brain = sensorBots[bot.id];
+        const brain = hybridBots[bot.id];
 
+        // Find nearest human target
         let target = null;
         let minDist = Infinity;
         Object.values(state.players).forEach(p => {
-            if (p.id === bot.id) return;
-            if (bot.isIt && p.isIt) return;
-            if (!bot.isIt && !p.isIt) return;
+            if (p.isBot) return; // Only target humans
             
             const dx = p.x - bot.x;
             const dy = p.y - bot.y;
@@ -119,66 +122,75 @@ export function updateBots(deltaTime) {
             }
         });
 
-        let botKeys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false };
-
         if (target) {
             const input = brain.think(bot, target, deltaTime, bot.isIt);
-            botKeys.ArrowLeft = input.left;
-            botKeys.ArrowRight = input.right;
             
-            if (input.jump && bot.aiState.lastJump !== true) {
-                bot.aiState.jumpBufferTime = 0.1;
+            if (input.mode === 'shadow') {
+                // Perfect physical override
+                bot.x = input.x;
+                bot.y = input.y;
+                bot.velocityX = input.velocityX;
+                bot.velocityY = input.velocityY;
+                
+                // Keep animation states updated
+                bot.aiState.coyoteTime = 0.1; 
+            } else {
+                // Physics mode
+                let botKeys = { ArrowLeft: input.left, ArrowRight: input.right, ArrowUp: false };
+                
+                if (input.jump && bot.aiState.lastJump !== true) {
+                    bot.aiState.jumpBufferTime = 0.1;
+                }
+                bot.aiState.lastJump = input.jump;
+                
+                // Apply physics
+                const wasGrounded = bot.aiState.coyoteTime > 0;
+                const targetVelocityX = botKeys.ArrowLeft ? -constants.MOVE_SPEED : botKeys.ArrowRight ? constants.MOVE_SPEED : 0;
+                
+                if (targetVelocityX !== 0) {
+                    const acceleration = wasGrounded ? constants.GROUND_ACCELERATION : constants.AIR_ACCELERATION;
+                    bot.velocityX = approach(bot.velocityX, targetVelocityX, acceleration * deltaTime);
+                } else {
+                    const friction = wasGrounded ? constants.GROUND_FRICTION : constants.AIR_FRICTION;
+                    bot.velocityX = approach(bot.velocityX, 0, friction * deltaTime);
+                }
+                
+                bot.velocityY += constants.GRAVITY * deltaTime;
+                const moveX = bot.velocityX * deltaTime;
+                const moveY = bot.velocityY * deltaTime;
+                const steps = Math.max(1, Math.ceil(Math.max(Math.abs(moveX), Math.abs(moveY)) / 4));
+                const stepX = moveX / steps;
+                const stepY = moveY / steps;
+                let onGround = false;
+
+                for (let i = 0; i < steps; i++) {
+                    bot.x += stepX;
+                    resolveSolidPlatformCollisions(bot);
+
+                    bot.y += stepY;
+                    const collisionResult = resolveSolidPlatformCollisions(bot);
+                    onGround = collisionResult.onGround || onGround;
+
+                    if (bot.x < constants.MAP_BOUNDS.left) { bot.x = constants.MAP_BOUNDS.left; bot.velocityX = 0; }
+                    if (bot.x > constants.MAP_BOUNDS.right - constants.PLAYER_SIZE) { bot.x = constants.MAP_BOUNDS.right - constants.PLAYER_SIZE; bot.velocityX = 0; }
+                    if (bot.y > constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE) {
+                        bot.y = constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE;
+                        bot.velocityY = 0;
+                        onGround = true;
+                    }
+                }
+                
+                bot.aiState.coyoteTime = onGround ? constants.COYOTE_TIME_SECONDS : Math.max(0, bot.aiState.coyoteTime - deltaTime);
+                if (bot.aiState.jumpBufferTime > 0 && (onGround || bot.aiState.coyoteTime > 0)) {
+                    bot.velocityY = constants.JUMP_STRENGTH;
+                    bot.aiState.jumpBufferTime = 0;
+                    bot.aiState.coyoteTime = 0;
+                    onGround = false;
+                }
             }
-            bot.aiState.lastJump = input.jump;
         }
         
-        // --- PHYSICS (identical to player physics) ---
-        const wasGrounded = bot.aiState.coyoteTime > 0;
-        const targetVelocityX = botKeys.ArrowLeft ? -constants.MOVE_SPEED : botKeys.ArrowRight ? constants.MOVE_SPEED : 0;
-        
-        if (targetVelocityX !== 0) {
-            const acceleration = wasGrounded ? constants.GROUND_ACCELERATION : constants.AIR_ACCELERATION;
-            bot.velocityX = approach(bot.velocityX, targetVelocityX, acceleration * deltaTime);
-        } else {
-            const friction = wasGrounded ? constants.GROUND_FRICTION : constants.AIR_FRICTION;
-            bot.velocityX = approach(bot.velocityX, 0, friction * deltaTime);
-        }
-        
-        bot.velocityY += constants.GRAVITY * deltaTime;
-        const moveX = bot.velocityX * deltaTime;
-        const moveY = bot.velocityY * deltaTime;
-        const steps = Math.max(1, Math.ceil(Math.max(Math.abs(moveX), Math.abs(moveY)) / 4));
-        const stepX = moveX / steps;
-        const stepY = moveY / steps;
-        let onGround = false;
-
-        for (let i = 0; i < steps; i++) {
-            bot.x += stepX;
-            resolveSolidPlatformCollisions(bot);
-
-            bot.y += stepY;
-            const collisionResult = resolveSolidPlatformCollisions(bot);
-            onGround = collisionResult.onGround || onGround;
-
-            if (bot.x < constants.MAP_BOUNDS.left) { bot.x = constants.MAP_BOUNDS.left; bot.velocityX = 0; }
-            if (bot.x > constants.MAP_BOUNDS.right - constants.PLAYER_SIZE) { bot.x = constants.MAP_BOUNDS.right - constants.PLAYER_SIZE; bot.velocityX = 0; }
-            if (bot.y > constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE) {
-                bot.y = constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE;
-                bot.velocityY = 0;
-                onGround = true;
-            }
-        }
-        
-        bot.aiState.lastX = bot.x;
         bot.aiState.jumpBufferTime = Math.max(0, bot.aiState.jumpBufferTime - deltaTime);
-        bot.aiState.coyoteTime = onGround ? constants.COYOTE_TIME_SECONDS : Math.max(0, bot.aiState.coyoteTime - deltaTime);
-
-        if (bot.aiState.jumpBufferTime > 0 && (onGround || bot.aiState.coyoteTime > 0)) {
-            bot.velocityY = constants.JUMP_STRENGTH;
-            bot.aiState.jumpBufferTime = 0;
-            bot.aiState.coyoteTime = 0;
-            onGround = false;
-        }
         
         const now = Date.now();
         if (!bot.aiState.lastEmitTime || now - bot.aiState.lastEmitTime > 50) {

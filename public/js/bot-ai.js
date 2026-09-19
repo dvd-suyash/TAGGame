@@ -1,176 +1,194 @@
 /**
- * Bot AI v6 — Raycast / Sensor Steering
- * =====================================
- * Relentless, neck-and-neck pursuit using spatial sensors.
+ * Bot AI v7 — Hybrid Shadow Tracker
+ * =================================
+ * As requested: "completely follow the user's character. fully."
  * 
- * Rules:
- * 1. Move horizontally towards the player.
- * 2. CEILING SENSOR: If the player is above us, cast a ray UP. If it hits a platform, 
- *    steer towards the edge of that platform to get out from under it. Once clear, JUMP!
- * 3. WALL SENSOR: Look ahead. If there's a wall, JUMP!
- * 4. GAP SENSOR: Look ahead and down. If there is no ground, and the player is not below us, JUMP!
- * 5. PANIC SENSOR: If we haven't moved in 0.3s, mash jump and reverse direction.
+ * - When CHASING (IT): The bot snaps to the player's historical path queue 
+ *   and replays their exact physical coordinates at a slightly faster speed (1.05x).
+ *   This creates a terrifying, flawless, neck-and-neck pursuit that cannot get stuck.
+ * 
+ * - When FLEEING (Runner): The bot uses Raycast Sensor steering to run away 
+ *   and avoid obstacles dynamically.
  */
 
 import * as constants from './constants.js';
 import { state } from './state.js';
 
-const CFG = {
-    playerSize: 26,
-    jumpCooldown: 0.2
-};
+// ─── PLAYER PATH RECORDER ───────────────────────────────────────────────────
 
-function getCeiling(x, botY, targetY, platforms) {
-    let lowestY = -Infinity;
-    let lowestCeiling = null;
-    
-    for (const p of platforms) {
-        if (p.height > 50 && p.width < 50) continue; // skip walls
-        
-        // Is platform horizontally above us?
-        if (x + CFG.playerSize > p.x && x < p.x + p.width) {
-            // Is it vertically between us and the target?
-            if (p.y < botY && p.y >= targetY - 10) {
-                if (p.y > lowestY) {
-                    lowestY = p.y;
-                    lowestCeiling = p;
-                }
+export class PathRecorder {
+    constructor() {
+        this.paths = {}; // keyed by player.id
+        this.maxFrames = 600; // 10 seconds at 60fps
+    }
+
+    record(players) {
+        for (const id in players) {
+            const p = players[id];
+            if (p.isBot) continue; // Only record humans
+
+            if (!this.paths[id]) {
+                this.paths[id] = [];
+            }
+
+            this.paths[id].push({
+                x: p.x,
+                y: p.y,
+                velocityX: p.velocityX,
+                velocityY: p.velocityY
+            });
+
+            if (this.paths[id].length > this.maxFrames) {
+                this.paths[id].shift();
             }
         }
     }
-    return lowestCeiling;
+    
+    getPath(id) {
+        return this.paths[id] || [];
+    }
 }
 
-function isGapAhead(x, botY, dir, platforms) {
-    const checkX = x + (dir * 45); // look ahead
-    const checkY = botY + CFG.playerSize + 5; // look below feet
-    
-    // Check floor bounds
-    if (checkY >= constants.MAP_BOUNDS.bottom) return false;
+// ─── SENSOR FLEE LOGIC (from v6) ────────────────────────────────────────────
 
+const CFG = { playerSize: 26 };
+
+function isGapAhead(x, botY, dir, platforms) {
+    const checkX = x + (dir * 45);
+    const checkY = botY + CFG.playerSize + 5;
+    if (checkY >= constants.MAP_BOUNDS.bottom) return false;
     for (const p of platforms) {
         if (p.height > 50 && p.width < 50) continue;
         if (checkX + CFG.playerSize > p.x && checkX < p.x + p.width) {
-            // Is there ground within a reasonable drop distance?
-            if (p.y >= botY && p.y < botY + 150) {
-                return false; // Found ground
-            }
+            if (p.y >= botY && p.y < botY + 150) return false;
         }
     }
-    return true; // Gap!
+    return true;
 }
 
 function isWallAhead(x, botY, dir, platforms) {
     const checkX = x + (dir * 30);
     for (const p of platforms) {
         if (checkX + CFG.playerSize > p.x && checkX < p.x + p.width) {
-            if (p.y < botY + CFG.playerSize && p.y + p.height > botY) {
-                return true;
-            }
+            if (p.y < botY + CFG.playerSize && p.y + p.height > botY) return true;
         }
     }
-    // Check map bounds
     if (checkX < constants.MAP_BOUNDS.left || checkX + CFG.playerSize > constants.MAP_BOUNDS.right) return true;
-    
     return false;
 }
 
-export class SensorBot {
-    constructor() {
+// ─── BOT BRAIN ──────────────────────────────────────────────────────────────
+
+export class HybridBot {
+    constructor(recorder, botIndex) {
+        this.recorder = recorder;
+        this.botIndex = botIndex;
+        
+        // Shadow Chasing State
+        this.shadowDelayFrames = 60 + (botIndex * 30); // Base 1s delay, +0.5s per bot
+        this.currentReadIndex = 0;
+        this.isLockedOn = false;
+        
+        // Fleeing State
+        this.jumpCooldown = 0;
+        this.fleeDir = Math.random() < 0.5 ? 1 : -1;
         this.stuckTime = 0;
         this.lastX = 0;
-        this.lastY = 0;
-        this.panicTimer = 0;
-        this.panicDir = 1;
-        this.jumpCooldown = 0;
     }
 
     think(bot, target, dt, isChasing) {
+        if (isChasing) {
+            return this._chaseShadow(bot, target);
+        } else {
+            return this._fleeSensors(bot, target, dt);
+        }
+    }
+
+    _chaseShadow(bot, target) {
+        const path = this.recorder.getPath(target.id);
+        
+        if (path.length < this.shadowDelayFrames) {
+            // Not enough history yet, stand still
+            return { mode: 'physics', left: false, right: false, jump: false };
+        }
+
+        // Lock on!
+        if (!this.isLockedOn) {
+            this.currentReadIndex = path.length - this.shadowDelayFrames;
+            this.isLockedOn = true;
+        }
+
+        // Advance through the path slightly faster than 1 frame per tick to catch up
+        this.currentReadIndex += 1.05; 
+        
+        // Cap it so we don't read past the present
+        if (this.currentReadIndex >= path.length - 2) {
+            this.currentReadIndex = path.length - 2;
+        }
+
+        // Interpolate position
+        const idx = Math.floor(this.currentReadIndex);
+        const p1 = path[idx];
+        const p2 = path[idx + 1];
+        const fraction = this.currentReadIndex - idx;
+
+        if (p1 && p2) {
+            const newX = p1.x + (p2.x - p1.x) * fraction;
+            const newY = p1.y + (p2.y - p1.y) * fraction;
+            const newVx = p1.velocityX + (p2.velocityX - p1.velocityX) * fraction;
+            const newVy = p1.velocityY + (p2.velocityY - p1.velocityY) * fraction;
+            
+            return {
+                mode: 'shadow',
+                x: newX,
+                y: newY,
+                velocityX: newVx,
+                velocityY: newVy
+            };
+        }
+
+        return { mode: 'physics', left: false, right: false, jump: false };
+    }
+
+    _fleeSensors(bot, target, dt) {
+        this.isLockedOn = false; // Break shadow lock when we stop chasing
         this.jumpCooldown -= dt;
 
-        // ── Stuck detection ──
-        const moved = Math.hypot(bot.x - this.lastX, bot.y - this.lastY);
-        if (moved < 2) {
+        if (Math.abs(bot.x - this.lastX) < 1) {
             this.stuckTime += dt;
         } else {
             this.stuckTime = 0;
         }
         this.lastX = bot.x;
-        this.lastY = bot.y;
 
-        if (this.stuckTime > 0.3 && this.panicTimer <= 0) {
-            this.panicTimer = 0.5;
-            this.panicDir = Math.random() < 0.5 ? 1 : -1;
+        if (this.stuckTime > 0.2) {
+            this.fleeDir *= -1;
             this.stuckTime = 0;
+            return { mode: 'physics', left: this.fleeDir < 0, right: this.fleeDir > 0, jump: true };
         }
 
-        if (this.panicTimer > 0) {
-            this.panicTimer -= dt;
-            return {
-                left: this.panicDir < 0,
-                right: this.panicDir > 0,
-                jump: this.jumpCooldown <= 0 && Math.random() < 0.2
-            };
+        let targetX = bot.x + this.fleeDir * 100;
+        
+        // If approaching target, reverse
+        if (Math.abs(target.x - targetX) < Math.abs(target.x - bot.x)) {
+            this.fleeDir *= -1;
+            targetX = bot.x + this.fleeDir * 100;
         }
 
-        // ── Steering ──
-        let targetX = target.x;
         let shouldJump = false;
-
-        if (!isChasing) {
-            // Flee to opposite side
-            const dx = bot.x - target.x;
-            targetX = dx > 0 ? constants.MAP_BOUNDS.right : constants.MAP_BOUNDS.left;
-        } else {
-            // Predict movement slightly
-            targetX += (target.velocityX || 0) * 0.15;
+        if (isWallAhead(bot.x, bot.y, this.fleeDir, state.platforms)) {
+            shouldJump = true;
         }
-
-        // Ceiling Evader
-        if (target.y < bot.y - 20) {
-            const ceiling = getCeiling(bot.x, bot.y, target.y, state.platforms);
-            if (ceiling) {
-                // Steer towards nearest edge of ceiling
-                const leftDist = bot.x - ceiling.x;
-                const rightDist = (ceiling.x + ceiling.width) - bot.x;
-                if (leftDist < rightDist) {
-                    targetX = ceiling.x - 20; // aim left of edge
-                } else {
-                    targetX = ceiling.x + ceiling.width + 20; // aim right of edge
-                }
-            } else {
-                // Target is above, and NO ceiling is blocking us! JUMP!
-                if (Math.abs(targetX - bot.x) < 80) {
-                    shouldJump = true;
-                }
-            }
-        }
-
-        const moveDir = targetX > bot.x ? 1 : -1;
-        const dx = targetX - bot.x;
-
-        // Wall & Gap Sensors
-        if (isWallAhead(bot.x, bot.y, moveDir, state.platforms)) {
+        if (isGapAhead(bot.x, bot.y, this.fleeDir, state.platforms) && target.y <= bot.y + 30) {
             shouldJump = true;
         }
 
-        if (isGapAhead(bot.x, bot.y, moveDir, state.platforms)) {
-            // Only jump over gap if target is NOT below us
-            if (target.y <= bot.y + 30) {
-                shouldJump = true;
-            }
-        }
-
         if (shouldJump && this.jumpCooldown <= 0) {
-            this.jumpCooldown = CFG.jumpCooldown;
+            this.jumpCooldown = 0.2;
         } else if (shouldJump) {
             shouldJump = false;
         }
 
-        return {
-            left: dx < -5,
-            right: dx > 5,
-            jump: shouldJump
-        };
+        return { mode: 'physics', left: this.fleeDir < 0, right: this.fleeDir > 0, jump: shouldJump };
     }
 }
