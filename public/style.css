@@ -425,93 +425,103 @@ button {
 
 /* MOBILE OPTIMIZATIONS */
 @media (max-width: 768px) {
+    body, .screen { overflow: hidden; }
+    
     .hero-title {
-        font-size: clamp(3rem, 12vw, 4rem);
-        margin-bottom: 2rem;
+        font-size: clamp(2rem, 10vw, 4rem);
+        margin-bottom: 2dvh;
     }
+    
     .bento-container {
-        padding: 0.5rem;
-        gap: 0.5rem;
         height: 100dvh;
-        justify-content: center;
+        width: 100%;
+        padding: 2dvh 4vw;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
         align-items: center;
     }
+    
+    .bento-header { margin: auto 0; }
+    
     .room-code-title {
-        font-size: 2rem;
+        font-size: min(2.5rem, 6dvh);
     }
+    
     .bento-grid {
-        grid-template-columns: 1fr;
-        grid-auto-flow: row;
-        gap: 0.5rem;
-        min-height: auto;
+        flex: 1;
+        min-height: 0;
         width: 100%;
         max-width: 400px;
+        display: grid;
+        grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 1.5dvh;
+        margin-bottom: auto;
     }
+    
     .map-cell, .roster-cell, .action-cell {
         grid-column: 1 / -1;
+    }
+    
+    .cell-content {
+        padding: min(1.5rem, 3dvh) min(1.5rem, 4vw);
+    }
+    
+    .cell-label {
+        margin-bottom: 1dvh;
+        font-size: min(0.75rem, 2dvh);
+    }
+    
+    .cell-title {
+        font-size: min(1.5rem, 4dvh);
+        margin-bottom: 0.5dvh;
+    }
+    
+    .map-cell { min-height: 0; }
+    
+    .roster-cell {
+        min-height: 0;
+    }
+    
+    .roster-cell .cell-content {
+        justify-content: space-between;
+    }
+    
+    .player-list {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-evenly;
+        flex: 1;
+        gap: 0.5dvh;
+        margin-top: 1dvh;
+        min-height: 0;
+    }
+    
+    .player-item {
+        flex: 1;
+        min-height: 0;
+        padding: 0 1rem;
+        max-height: 48px;
+    }
+    
+    .host-controls {
+        margin-top: 1.5dvh;
+        padding: min(0.5rem, 1dvh);
+    }
+    
+    .action-cell {
+        min-height: min(60px, 8dvh);
         grid-row: auto;
     }
-    .cell-content {
-        padding: 1rem;
-    }
-    .cell-title {
-        font-size: 1.5rem;
-        margin-bottom: 0.25rem;
-    }
-    .map-cell {
-        min-height: 120px;
-    }
-    .roster-cell {
-        /* Force roster cell to fit nicely */
-    }
-    .player-list {
-        grid-template-rows: repeat(4, 40px);
-        gap: 0.5rem;
-        margin-top: 0.5rem;
-    }
-    .player-item {
-        padding: 0.5rem 1rem;
-        gap: 0.5rem;
-    }
-    .action-cell {
-        min-height: 60px;
-    }
+    
     .btn-massive {
-        font-size: 1.2rem;
-        padding: 0.5rem;
+        font-size: min(1.5rem, 3.5dvh);
+        padding: 0;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
-    .btn-massive {
-        font-size: 1.5rem;
-        padding: 1rem;
-    }
-    .cell-title {
-        font-size: 2rem;
-    }
-    .hero-actions {
-        flex-direction: column;
-        width: 100%;
-        max-width: 300px;
-        margin: 0 auto;
-    }
-    .btn-primary, .join-group {
-        width: 100%;
-    }
-    #joinCodeInput {
-        width: 100%;
-    }
-}
-
-/* Game Screen Layout Fixes */
-#gameScreen {
-    overflow: hidden;
-    padding: 0;
-    justify-content: center;
-}
-.hud-shell {
-    margin: auto;
-    width: 100%;
-    height: 100%;
-    max-width: 1400px;
-    max-height: 700px;
-    aspect-ratio: 2 / 1;
 }
