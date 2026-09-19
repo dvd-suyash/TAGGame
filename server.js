@@ -769,6 +769,17 @@ io.on('connection', (socket) => {
         }
     });
 
+
+    socket.on('startGame', () => {
+        if (!socket.roomCode) return;
+        const room = rooms[socket.roomCode];
+        if (!room) return;
+        // Only host can start (player 0)
+        if (room.players[0] && room.players[0].id === socket.id) {
+            prepareRound(socket.roomCode);
+        }
+    });
+
     socket.on('playAgain', () => {
         if (!socket.roomCode) return;
         const room = rooms[socket.roomCode];
