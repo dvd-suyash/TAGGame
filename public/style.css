@@ -418,3 +418,56 @@ button {
     border-radius: 99px;
     font-weight: bold;
 }
+
+/* MOBILE OPTIMIZATIONS */
+@media (max-width: 768px) {
+    .hero-title {
+        font-size: clamp(3rem, 12vw, 4rem);
+        margin-bottom: 2rem;
+    }
+    .bento-container {
+        padding: 1rem;
+        gap: 1rem;
+    }
+    .room-code-title {
+        font-size: 2.5rem;
+    }
+    .bento-grid {
+        grid-template-columns: 1fr;
+        grid-auto-flow: row;
+        gap: 1rem;
+        min-height: auto;
+    }
+    .map-cell, .roster-cell, .action-cell {
+        grid-column: 1 / -1;
+        grid-row: auto;
+    }
+    .map-cell {
+        min-height: 250px;
+    }
+    .roster-cell {
+        min-height: 300px;
+    }
+    .action-cell {
+        min-height: 80px;
+    }
+    .btn-massive {
+        font-size: 1.5rem;
+        padding: 1rem;
+    }
+    .cell-title {
+        font-size: 2rem;
+    }
+    .hero-actions {
+        flex-direction: column;
+        width: 100%;
+        max-width: 300px;
+        margin: 0 auto;
+    }
+    .btn-primary, .join-group {
+        width: 100%;
+    }
+    #joinCodeInput {
+        width: 100%;
+    }
+}
