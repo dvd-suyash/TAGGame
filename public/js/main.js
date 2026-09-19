@@ -23,7 +23,7 @@ window.addEventListener('popstate', (event) => {
 
 // Menu screen handlers
 refreshMapButtons();
-setupInfiniteMapCarousel();
+// setupInfiniteMapCarousel(); removed
 
 ui.playerCountButtons.forEach(button => {
     button.addEventListener('click', () => {
@@ -33,7 +33,7 @@ ui.playerCountButtons.forEach(button => {
         setActiveScreen('mapScreen');
         requestAnimationFrame(() => {
             scrollSelectedMapIntoView('smooth');
-            syncMapSelectionToViewport();
+            // syncMapSelectionToViewport(); removed
         });
     });
 });
@@ -58,10 +58,7 @@ if (ui.mapCarousel) {
         }
     }, { passive: false });
 
-    ui.mapCarousel.addEventListener('scroll', () => {
-        window.clearTimeout(ui.mapCarousel._selectionTimer);
-        ui.mapCarousel._selectionTimer = window.setTimeout(syncMapSelectionToViewport, 80);
-    });
+    // Auto-select on scroll removed
 }
 
 
