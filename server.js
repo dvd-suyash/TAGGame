@@ -738,9 +738,7 @@ io.on('connection', (socket) => {
         emitRoomStatus(roomCode);
         
         // If room is full, start the game
-        if (room.players.length === room.maxPlayers) {
-            prepareRound(roomCode);
-        }
+        // Auto-start removed, host must click start
     });
 
     // Handle player movement
