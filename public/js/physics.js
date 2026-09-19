@@ -71,7 +71,6 @@ export function updateRemotePlayers(deltaTime) {
 
 
 let actionBots = null;
-let actionBots = {};
 
 export function initBotAI() {
     actionBots = new PathRecorder();
