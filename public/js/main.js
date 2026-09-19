@@ -213,12 +213,21 @@ socket.on('tick', (buffer) => {
         const pisIt = view[i + 5] === 1;
 
         const targetPlayer = Object.values(state.players).find(p => p.number === pNumber);
-        if (targetPlayer && targetPlayer.id !== socket.id) {
-            targetPlayer.targetX = px;
-            targetPlayer.targetY = py;
-            targetPlayer.velocityX = pvx;
-            targetPlayer.velocityY = pvy;
-            targetPlayer.isIt = pisIt;
+        if (targetPlayer) {
+            if (targetPlayer.id === socket.id) {
+                // We are the local player, server only updates our 'isIt' state
+                targetPlayer.isIt = pisIt;
+            } else if (state.isHost && targetPlayer.isBot) {
+                // We are the host running the bot physics. Only sync 'isIt' from server.
+                targetPlayer.isIt = pisIt;
+            } else {
+                // Remote player (or bot viewed by non-host)
+                targetPlayer.targetX = px;
+                targetPlayer.targetY = py;
+                targetPlayer.velocityX = pvx;
+                targetPlayer.velocityY = pvy;
+                targetPlayer.isIt = pisIt;
+            }
         }
     }
 });
