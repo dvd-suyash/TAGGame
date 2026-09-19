@@ -9,6 +9,18 @@ import { upsertPlayerState, initializePlayers, updateRemotePlayers, updatePlayer
 import { draw, drawArenaBackground, drawBunkerArenaBackground, drawCathedralArenaBackground, drawCathedralWindow, drawCathedralColumns, drawCathedralFloorGlow, drawMazeArenaBackground, drawCourtyardArenaBackground, drawSimpleCourtyardSilhouettes, drawSimpleCourtyardFloorBands, drawCourtyardPalace, drawCourtyardDome, drawCourtyardArcadeRow, drawCourtyardPlanters, drawCourtyardFloorPattern, drawMapEllipses, drawMapStumps, drawPlatforms, drawPlayers, drawPlayerTrail, drawPlayerBody, drawPlayerLabel, roundRect } from './render.js';
 
 
+
+// Initialize History API for browser back button
+history.replaceState({ screenId: 'playerCountScreen' }, "", "#playerCountScreen");
+
+window.addEventListener('popstate', (event) => {
+    if (event.state && event.state.screenId) {
+        setActiveScreen(event.state.screenId, false);
+    } else {
+        setActiveScreen('playerCountScreen', false);
+    }
+});
+
 // Menu screen handlers
 refreshMapButtons();
 setupInfiniteMapCarousel();

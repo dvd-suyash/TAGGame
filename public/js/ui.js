@@ -39,10 +39,15 @@ export function updateMapSelectionUI() {
     });
 }
 
-export function setActiveScreen(screenId) {
+export function setActiveScreen(screenId, pushToHistory = true) {
     document.querySelectorAll('.screen').forEach(screen => {
         screen.classList.toggle('active', screen.id === screenId);
     });
+    
+    if (pushToHistory) {
+        history.pushState({ screenId }, "", "#" + screenId);
+    }
+});
 }
 
 export function updateLobbySummaries() {
