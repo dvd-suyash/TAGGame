@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { BreadcrumbTrail, BreadcrumbBot } from './bot-ai.js';
+import { SensorBot } from './bot-ai.js';
 import { ui } from './ui.js';
 import * as constants from './constants.js';
 import { socket } from './network.js';
@@ -80,33 +80,28 @@ export function updateRemotePlayers(deltaTime) {
 }
 
 
-let breadcrumbTrail = null;
-let breadcrumbBots = {};
+let sensorBots = {};
 
 export function initBotAI() {
-    breadcrumbTrail = new BreadcrumbTrail();
-    breadcrumbBots = {};
-    console.log('[Bot AI] Breadcrumb Trail initialized');
+    sensorBots = {};
+    console.log('[Bot AI] Sensor Steering initialized');
 }
 
 export function recordPlayerInputs(dt) {
-    if (!breadcrumbTrail || !state.players[state.myPlayerId]) return;
-    const me = state.players[state.myPlayerId];
-    breadcrumbTrail.record(me, dt, state.keys);
+    // Unused in Sensor AI
 }
 
 export function updateBots(deltaTime) {
     if (!state.isHost) return;
-    if (!breadcrumbTrail) initBotAI();
     
     const bots = Object.values(state.players).filter(p => p.isBot);
     bots.forEach(bot => {
         if (!bot.aiState) bot.aiState = { jumpBufferTime: 0, coyoteTime: 0, lastX: bot.x };
         
-        if (!breadcrumbBots[bot.id]) {
-            breadcrumbBots[bot.id] = new BreadcrumbBot(breadcrumbTrail);
+        if (!sensorBots[bot.id]) {
+            sensorBots[bot.id] = new SensorBot();
         }
-        const brain = breadcrumbBots[bot.id];
+        const brain = sensorBots[bot.id];
 
         let target = null;
         let minDist = Infinity;

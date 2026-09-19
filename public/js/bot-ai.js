@@ -1,76 +1,93 @@
 /**
- * Bot AI v5 — Breadcrumb Trail Tracker
+ * Bot AI v6 — Raycast / Sensor Steering
  * =====================================
- * The ultimate solution requested by the user: "trace my path".
+ * Relentless, neck-and-neck pursuit using spatial sensors.
  * 
- * 1. The human player leaves a trail of breadcrumbs (X, Y, isJumping).
- * 2. Bots find the nearest breadcrumb to their current position.
- * 3. They target a breadcrumb slightly ahead on the trail.
- * 4. They simply move towards that breadcrumb. If it's higher, they jump!
- * 5. If they get stuck (e.g., trying to reach a breadcrumb they aren't on the path for),
- *    they use a panic-juke to unstuck themselves.
+ * Rules:
+ * 1. Move horizontally towards the player.
+ * 2. CEILING SENSOR: If the player is above us, cast a ray UP. If it hits a platform, 
+ *    steer towards the edge of that platform to get out from under it. Once clear, JUMP!
+ * 3. WALL SENSOR: Look ahead. If there's a wall, JUMP!
+ * 4. GAP SENSOR: Look ahead and down. If there is no ground, and the player is not below us, JUMP!
+ * 5. PANIC SENSOR: If we haven't moved in 0.3s, mash jump and reverse direction.
  */
 
 import * as constants from './constants.js';
+import { state } from './state.js';
 
 const CFG = {
-    crumbInterval: 0.05, // drop a crumb every 50ms
-    trailDuration: 15,   // keep 15 seconds of trail
-    targetAhead: 5,      // target the crumb 5 steps ahead (to smooth out movement)
-    catchupDist: 30,     // if within 30px, consider crumb reached
+    playerSize: 26,
+    jumpCooldown: 0.2
 };
 
-export class BreadcrumbTrail {
-    constructor() {
-        this.crumbs = [];
-        this.timeSinceLastCrumb = 0;
-    }
-
-    record(player, dt, keys) {
-        this.timeSinceLastCrumb += dt;
-        if (this.timeSinceLastCrumb >= CFG.crumbInterval) {
-            this.timeSinceLastCrumb = 0;
-            this.crumbs.push({
-                x: player.x,
-                y: player.y,
-                jump: !!keys['ArrowUp']
-            });
-
-            const maxCrumbs = (CFG.trailDuration / CFG.crumbInterval);
-            if (this.crumbs.length > maxCrumbs) {
-                this.crumbs.shift();
+function getCeiling(x, botY, targetY, platforms) {
+    let lowestY = -Infinity;
+    let lowestCeiling = null;
+    
+    for (const p of platforms) {
+        if (p.height > 50 && p.width < 50) continue; // skip walls
+        
+        // Is platform horizontally above us?
+        if (x + CFG.playerSize > p.x && x < p.x + p.width) {
+            // Is it vertically between us and the target?
+            if (p.y < botY && p.y >= targetY - 10) {
+                if (p.y > lowestY) {
+                    lowestY = p.y;
+                    lowestCeiling = p;
+                }
             }
         }
     }
-
-    getNearestIndex(botX, botY) {
-        if (this.crumbs.length === 0) return -1;
-        let bestIdx = 0;
-        let bestDist = Infinity;
-        for (let i = 0; i < this.crumbs.length; i++) {
-            const c = this.crumbs[i];
-            const dist = Math.hypot(c.x - botX, c.y - botY);
-            if (dist < bestDist) {
-                bestDist = dist;
-                bestIdx = i;
-            }
-        }
-        return bestIdx;
-    }
+    return lowestCeiling;
 }
 
-export class BreadcrumbBot {
-    constructor(trail) {
-        this.trail = trail;
+function isGapAhead(x, botY, dir, platforms) {
+    const checkX = x + (dir * 45); // look ahead
+    const checkY = botY + CFG.playerSize + 5; // look below feet
+    
+    // Check floor bounds
+    if (checkY >= constants.MAP_BOUNDS.bottom) return false;
+
+    for (const p of platforms) {
+        if (p.height > 50 && p.width < 50) continue;
+        if (checkX + CFG.playerSize > p.x && checkX < p.x + p.width) {
+            // Is there ground within a reasonable drop distance?
+            if (p.y >= botY && p.y < botY + 150) {
+                return false; // Found ground
+            }
+        }
+    }
+    return true; // Gap!
+}
+
+function isWallAhead(x, botY, dir, platforms) {
+    const checkX = x + (dir * 30);
+    for (const p of platforms) {
+        if (checkX + CFG.playerSize > p.x && checkX < p.x + p.width) {
+            if (p.y < botY + CFG.playerSize && p.y + p.height > botY) {
+                return true;
+            }
+        }
+    }
+    // Check map bounds
+    if (checkX < constants.MAP_BOUNDS.left || checkX + CFG.playerSize > constants.MAP_BOUNDS.right) return true;
+    
+    return false;
+}
+
+export class SensorBot {
+    constructor() {
         this.stuckTime = 0;
         this.lastX = 0;
         this.lastY = 0;
         this.panicTimer = 0;
         this.panicDir = 1;
-        this.wanderDir = Math.random() < 0.5 ? 1 : -1;
+        this.jumpCooldown = 0;
     }
 
     think(bot, target, dt, isChasing) {
+        this.jumpCooldown -= dt;
+
         // ── Stuck detection ──
         const moved = Math.hypot(bot.x - this.lastX, bot.y - this.lastY);
         if (moved < 2) {
@@ -81,8 +98,8 @@ export class BreadcrumbBot {
         this.lastX = bot.x;
         this.lastY = bot.y;
 
-        if (this.stuckTime > 0.4 && this.panicTimer <= 0) {
-            this.panicTimer = 0.8;
+        if (this.stuckTime > 0.3 && this.panicTimer <= 0) {
+            this.panicTimer = 0.5;
             this.panicDir = Math.random() < 0.5 ? 1 : -1;
             this.stuckTime = 0;
         }
@@ -92,63 +109,67 @@ export class BreadcrumbBot {
             return {
                 left: this.panicDir < 0,
                 right: this.panicDir > 0,
-                jump: Math.random() < 0.1
+                jump: this.jumpCooldown <= 0 && Math.random() < 0.2
             };
         }
 
-        // ── Breadcrumb Tracking ──
+        // ── Steering ──
         let targetX = target.x;
-        let targetY = target.y;
         let shouldJump = false;
 
-        const nearestIdx = this.trail.getNearestIndex(bot.x, bot.y);
-        
-        if (nearestIdx !== -1) {
-            const nearestCrumb = this.trail.crumbs[nearestIdx];
-            const distToTrail = Math.hypot(bot.x - nearestCrumb.x, bot.y - nearestCrumb.y);
+        if (!isChasing) {
+            // Flee to opposite side
+            const dx = bot.x - target.x;
+            targetX = dx > 0 ? constants.MAP_BOUNDS.right : constants.MAP_BOUNDS.left;
+        } else {
+            // Predict movement slightly
+            targetX += (target.velocityX || 0) * 0.15;
+        }
 
-            if (distToTrail < 150) {
-                // We are near the trail! Look ahead.
-                let targetIdx = Math.min(this.trail.crumbs.length - 1, nearestIdx + CFG.targetAhead);
-                const targetCrumb = this.trail.crumbs[targetIdx];
-                
-                targetX = targetCrumb.x;
-                targetY = targetCrumb.y;
-
-                // If the trail goes up significantly, JUMP!
-                if (targetCrumb.y < bot.y - 15) {
-                    shouldJump = true;
-                }
-                // Also copy the player's jump input if they jumped around this crumb
-                if (targetCrumb.jump) {
-                    shouldJump = true;
+        // Ceiling Evader
+        if (target.y < bot.y - 20) {
+            const ceiling = getCeiling(bot.x, bot.y, target.y, state.platforms);
+            if (ceiling) {
+                // Steer towards nearest edge of ceiling
+                const leftDist = bot.x - ceiling.x;
+                const rightDist = (ceiling.x + ceiling.width) - bot.x;
+                if (leftDist < rightDist) {
+                    targetX = ceiling.x - 20; // aim left of edge
+                } else {
+                    targetX = ceiling.x + ceiling.width + 20; // aim right of edge
                 }
             } else {
-                // We are far from the trail. Just wander towards the target.
-                const dy = target.y - bot.y;
-                if (Math.abs(dy) > 40) {
-                    // Target is on different level, just patrol to find edge
-                    targetX = bot.x + (this.wanderDir * 100);
-                    if (this.stuckTime > 0.1) this.wanderDir *= -1;
+                // Target is above, and NO ceiling is blocking us! JUMP!
+                if (Math.abs(targetX - bot.x) < 80) {
+                    shouldJump = true;
                 }
             }
         }
 
+        const moveDir = targetX > bot.x ? 1 : -1;
         const dx = targetX - bot.x;
 
-        // Evasion logic if not IT
-        if (!isChasing) {
-            const evadeDx = bot.x - target.x;
-            return {
-                left: evadeDx < 0,
-                right: evadeDx > 0,
-                jump: shouldJump || Math.random() < 0.02
-            };
+        // Wall & Gap Sensors
+        if (isWallAhead(bot.x, bot.y, moveDir, state.platforms)) {
+            shouldJump = true;
+        }
+
+        if (isGapAhead(bot.x, bot.y, moveDir, state.platforms)) {
+            // Only jump over gap if target is NOT below us
+            if (target.y <= bot.y + 30) {
+                shouldJump = true;
+            }
+        }
+
+        if (shouldJump && this.jumpCooldown <= 0) {
+            this.jumpCooldown = CFG.jumpCooldown;
+        } else if (shouldJump) {
+            shouldJump = false;
         }
 
         return {
-            left: dx < -10,
-            right: dx > 10,
+            left: dx < -5,
+            right: dx > 5,
             jump: shouldJump
         };
     }
