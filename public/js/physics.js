@@ -73,7 +73,6 @@ export function updateRemotePlayers(deltaTime) {
 let actionBots = null;
 
 export function initBotAI() {
-    actionBots = new PathRecorder();
     actionBots = {};
     console.log('[Bot AI] Pure Action Sensor initialized');
 }
