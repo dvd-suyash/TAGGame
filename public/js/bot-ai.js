@@ -1,43 +1,36 @@
 /**
- * Bot AI v10 — Waypoint Climber
+ * Bot AI v11 — Waypoint Climber (with Banned Nodes)
  * ==============================
- * A simple, organic approach requested by the user.
- * - If target is on the same level or below: chase X directly.
- * - If target is above: find a platform edge, walk to its outside, jump inwards to climb it.
  */
 
 import * as constants from './constants.js';
 import { state } from './state.js';
 
-function findBestClimbNode(bot, target, platforms) {
+function findBestClimbNode(bot, target, platforms, bannedNodes) {
     let bestNode = null;
     let bestScore = Infinity;
 
     for (const p of platforms) {
         if (p.height > 50 && p.width < 50) continue; // skip walls
-
-        // We only care about platforms ABOVE the bot
         if (p.y >= bot.y - 10) continue;
-
-        // Must be reachable by a single jump (jump strength is ~120px)
         const heightDiff = bot.y - p.y;
         if (heightDiff > 140) continue; 
 
-        // Evaluate Left Edge (jump right to get on)
         const leftEdgeX = p.x;
-        // Evaluate Right Edge (jump left to get on)
         const rightEdgeX = p.x + p.width;
 
         const evaluateEdge = (edgeX, inwardDir) => {
+            const nodeId = Math.round(edgeX) + ',' + Math.round(p.y);
+            if (bannedNodes && bannedNodes.has(nodeId)) return;
+
             const distToBot = Math.hypot(edgeX - bot.x, p.y - bot.y);
             const distToTarget = Math.hypot(edgeX - target.x, p.y - target.y);
-            
-            // Prefer edges that are closer to the bot, but also closer to the target
             const score = (distToBot * 1.5) + distToTarget;
 
             if (score < bestScore) {
                 bestScore = score;
                 bestNode = {
+                    id: nodeId,
                     x: edgeX,
                     y: p.y,
                     inwardDir: inwardDir
@@ -62,10 +55,22 @@ export class ActionBot {
         // Waypoint state
         this.targetNode = null;
         this.nodeTimeout = 0;
+        
+        // Memory of failed jumps (so we don't get stuck under ceilings forever)
+        this.bannedNodes = new Map();
     }
 
     think(bot, target, dt, isChasing) {
         this.jumpCooldown -= dt;
+
+        // Cleanup banned nodes
+        for (const [nodeId, time] of this.bannedNodes.entries()) {
+            if (time <= 0) {
+                this.bannedNodes.delete(nodeId);
+            } else {
+                this.bannedNodes.set(nodeId, time - dt);
+            }
+        }
 
         // Stuck detection panic
         if (Math.abs(bot.x - this.lastX) < 1) {
@@ -110,13 +115,19 @@ export class ActionBot {
 
             // Find a new platform edge to climb to
             if (!this.targetNode) {
-                this.targetNode = findBestClimbNode(bot, target, state.platforms);
-                this.nodeTimeout = 3.0; // Give up after 3 seconds of trying
+                this.targetNode = findBestClimbNode(bot, target, state.platforms, this.bannedNodes);
+                this.nodeTimeout = 2.0; // Give up after 2 seconds to be more responsive
             }
 
             if (this.targetNode) {
                 this.nodeTimeout -= dt;
-                if (this.nodeTimeout <= 0) { this.targetNode = null; return { left: false, right: false, jump: false }; }
+                
+                // If we took too long, we are probably hitting our head on a ceiling. Ban this node!
+                if (this.nodeTimeout <= 0) { 
+                    this.bannedNodes.set(this.targetNode.id, 5.0); // Ban for 5 seconds
+                    this.targetNode = null; 
+                    return { left: false, right: false, jump: false }; 
+                }
 
                 // We want to jump from slightly OUTSIDE the platform edge
                 const launchPadX = this.targetNode.x - (this.targetNode.inwardDir * 40);
@@ -155,7 +166,6 @@ export class ActionBot {
         const dx = target.x - bot.x;
         
         let shouldJump = false;
-        // Occasionally jump if the target is roughly level, to hop over small gaps organically
         if (Math.abs(dy) < 40 && Math.random() < 0.02 && this.jumpCooldown <= 0) {
             shouldJump = true;
             this.jumpCooldown = 0.5;
@@ -169,7 +179,6 @@ export class ActionBot {
     }
 
     _flee(bot, target, dt) {
-        // Run in opposite direction
         const dx = bot.x - target.x;
         let shouldJump = false;
 
@@ -179,8 +188,8 @@ export class ActionBot {
         }
 
         return {
-            left: dx < -10,  // target is right, go left
-            right: dx > 10, // target is left, go right
+            left: dx < -10,
+            right: dx > 10,
             jump: shouldJump
         };
     }
