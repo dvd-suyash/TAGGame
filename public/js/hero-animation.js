@@ -75,7 +75,7 @@ export function initHeroAnimation() {
                 // Tail (0) is opacity 0 (Red box is here)
                 // Head (length-1) is opacity 0.5 (Green box is here)
                 const progress = i / this.history.length;
-                ctx.strokeStyle = \`rgba(60, 214, 197, \${progress * 0.6})\`;
+                ctx.strokeStyle = `rgba(60, 214, 197, ${progress * 0.6})`;
                 
                 ctx.beginPath();
                 ctx.moveTo(p1.x, p1.y);
