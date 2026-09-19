@@ -78,6 +78,120 @@ export function updateRemotePlayers(deltaTime) {
     });
 }
 
+
+export function updateBots(deltaTime) {
+    if (!state.isHost) return;
+    
+    const bots = Object.values(state.players).filter(p => p.isBot);
+    bots.forEach(bot => {
+        const botKeys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false };
+        if (!bot.aiState) bot.aiState = { jumpBufferTime: 0, coyoteTime: 0 };
+        
+        // --- AI LOGIC ---
+        // Find nearest player to target
+        let target = null;
+        let minDist = Infinity;
+        Object.values(state.players).forEach(p => {
+            if (p.id === bot.id) return;
+            if (bot.isIt && p.isIt) return;
+            if (!bot.isIt && !p.isIt) return;
+            
+            const dx = p.x - bot.x;
+            const dy = p.y - bot.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < minDist) {
+                minDist = dist;
+                target = p;
+            }
+        });
+
+        if (target) {
+            const dx = target.x - bot.x;
+            const dy = target.y - bot.y;
+            
+            if (bot.isIt) {
+                if (dx > 20) botKeys.ArrowRight = true;
+                else if (dx < -20) botKeys.ArrowLeft = true;
+            } else {
+                if (dx > 0) botKeys.ArrowLeft = true;
+                else botKeys.ArrowRight = true;
+            }
+
+            // Jump if stuck horizontally
+            if ((botKeys.ArrowLeft || botKeys.ArrowRight) && Math.abs(bot.velocityX) < 10) {
+                if (Math.random() < 0.1) botKeys.ArrowUp = true;
+            }
+            // Jump if target is significantly higher
+            if (bot.isIt && dy < -80 && Math.abs(dx) < 150) {
+                if (Math.random() < 0.05) botKeys.ArrowUp = true;
+            }
+        }
+
+        if (botKeys.ArrowUp && bot.aiState.lastJump !== true) {
+            bot.aiState.jumpBufferTime = 0.1;
+        }
+        bot.aiState.lastJump = botKeys.ArrowUp;
+        // ----------------
+        
+        // --- PHYSICS ---
+        const wasGrounded = bot.aiState.coyoteTime > 0;
+        const targetVelocityX = botKeys.ArrowLeft ? -constants.MOVE_SPEED : botKeys.ArrowRight ? constants.MOVE_SPEED : 0;
+        
+        if (targetVelocityX !== 0) {
+            const acceleration = wasGrounded ? constants.GROUND_ACCELERATION : constants.AIR_ACCELERATION;
+            bot.velocityX = approach(bot.velocityX, targetVelocityX, acceleration * deltaTime);
+        } else {
+            const friction = wasGrounded ? constants.GROUND_FRICTION : constants.AIR_FRICTION;
+            bot.velocityX = approach(bot.velocityX, 0, friction * deltaTime);
+        }
+        
+        bot.velocityY += constants.GRAVITY * deltaTime;
+        const moveX = bot.velocityX * deltaTime;
+        const moveY = bot.velocityY * deltaTime;
+        const steps = Math.max(1, Math.ceil(Math.max(Math.abs(moveX), Math.abs(moveY)) / 4));
+        const stepX = moveX / steps;
+        const stepY = moveY / steps;
+        let onGround = false;
+
+        for (let i = 0; i < steps; i++) {
+            bot.x += stepX;
+            resolveSolidPlatformCollisions(bot);
+
+            bot.y += stepY;
+            const collisionResult = resolveSolidPlatformCollisions(bot);
+            onGround = collisionResult.onGround || onGround;
+
+            if (bot.x < constants.MAP_BOUNDS.left) bot.x = constants.MAP_BOUNDS.left;
+            if (bot.x > constants.MAP_BOUNDS.right - constants.PLAYER_SIZE) bot.x = constants.MAP_BOUNDS.right - constants.PLAYER_SIZE;
+            if (bot.y > constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE) {
+                bot.y = constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE;
+                bot.velocityY = 0;
+                onGround = true;
+            }
+        }
+        
+        bot.aiState.jumpBufferTime = Math.max(0, bot.aiState.jumpBufferTime - deltaTime);
+        bot.aiState.coyoteTime = onGround ? constants.COYOTE_TIME_SECONDS : Math.max(0, bot.aiState.coyoteTime - deltaTime);
+
+        if (bot.aiState.jumpBufferTime > 0 && (onGround || bot.aiState.coyoteTime > 0)) {
+            bot.velocityY = constants.JUMP_STRENGTH;
+            bot.aiState.jumpBufferTime = 0;
+            bot.aiState.coyoteTime = 0;
+            onGround = false;
+        }
+        // ---------------
+        
+        // Emit to server
+        const now = Date.now();
+        if (!bot.aiState.lastEmitTime || now - bot.aiState.lastEmitTime > 50) {
+            bot.aiState.lastEmitTime = now;
+            socket.emit('botMove', {
+                id: bot.id, x: bot.x, y: bot.y, velocityX: bot.velocityX, velocityY: bot.velocityY
+            });
+        }
+    });
+}
+
 export function updatePlayer(deltaTime) {
     const player = state.players[state.myPlayerId];
     if (!player) return;

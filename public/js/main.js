@@ -3,7 +3,7 @@ import { ui, setActiveScreen, showError, showRoundBanner, hideRoundBanner, updat
 import * as constants from './constants.js';
 import { socket } from './network.js';
 import { getMapDefinition, initPlatforms, updatePlatforms } from './map.js';
-import { initializePlayers, updateRemotePlayers, updatePlayer, checkCollisions } from './physics.js';
+import { initializePlayers, updateRemotePlayers, updatePlayer, checkCollisions, updateBots } from './physics.js';
 import { draw } from './render.js';
 
 // Setup basic map definitions array for host to cycle through
@@ -272,6 +272,7 @@ export function gameLoop(currentTime) {
     
     if (state.roundActive) {
         updatePlatforms(currentTime);
+        updateBots(deltaTime);
         updatePlayer(deltaTime);
         checkCollisions();
     }

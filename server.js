@@ -609,13 +609,27 @@ function startRoundCountdown(roomCode) {
     }, 1000);
 }
 
+
 function prepareRound(roomCode) {
     const room = rooms[roomCode];
     if (!room) {
         return;
     }
 
+    // --- Inject Bots ---
+    const botsNeeded = room.maxPlayers - room.players.length;
+    for (let i = 0; i < botsNeeded; i++) {
+        const botNumber = room.players.length + 1;
+        const botId = `BOT_${Math.random().toString(36).substr(2, 6)}`;
+        const botPlayer = createPlayerData(botId, botNumber, room.mapId);
+        botPlayer.isBot = true;
+        botPlayer.name = `Bot ${botNumber}`;
+        room.players.push(botPlayer);
+    }
+    // -------------------
+
     resetPlayersForRound(room);
+
     room.timeRemaining = room.roundDuration;
     room.gameEnded = false;
     room.roundLive = false;
@@ -742,6 +756,24 @@ io.on('connection', (socket) => {
     });
 
     // Handle player movement
+
+    socket.on('botMove', (data) => {
+        if (!socket.roomCode) return;
+        const room = rooms[socket.roomCode];
+        if (!room || room.gameEnded || !room.roundLive) return;
+
+        // Ensure sender is host
+        if (room.players[0] && room.players[0].id === socket.id) {
+            const bot = room.players.find(p => p.id === data.id);
+            if (bot && bot.isBot) {
+                bot.x = data.x;
+                bot.y = data.y;
+                bot.velocityX = data.velocityX;
+                bot.velocityY = data.velocityY;
+            }
+        }
+    });
+
     socket.on('playerMove', (data) => {
         if (!socket.roomCode) return;
         const room = rooms[socket.roomCode];
