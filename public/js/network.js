@@ -89,7 +89,30 @@ socket.on('gameStart', (playerData) => {
     startGame();
 });
 
-socket.on('playerMoved', (playerData) => {
+
+    socket.on('tick', (buffer) => {
+        if (!state.roundActive) return;
+        const view = new Float32Array(buffer);
+        for (let i = 0; i < view.length; i += 6) {
+            const pNumber = view[i];
+            const px = view[i + 1];
+            const py = view[i + 2];
+            const pvx = view[i + 3];
+            const pvy = view[i + 4];
+            const pisIt = view[i + 5] === 1;
+
+            const targetPlayer = Object.values(state.players).find(p => p.number === pNumber);
+            if (targetPlayer && targetPlayer.id !== state.myPlayerId) {
+                targetPlayer.targetX = px;
+                targetPlayer.targetY = py;
+                targetPlayer.velocityX = pvx;
+                targetPlayer.velocityY = pvy;
+                targetPlayer.isIt = pisIt;
+            }
+        }
+    });
+
+    socket.on('playerMoved', (playerData) => { // keep legacy just in case
     upsertPlayerState(playerData, false);
 });
 

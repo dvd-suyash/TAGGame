@@ -47,7 +47,16 @@ export function initializePlayers(playerList, snap = true) {
     playerList.forEach(player => upsertPlayerState(player, snap));
 }
 
+let lastEmitTime = 0;
 export function updateRemotePlayers(deltaTime) {
+    for (const id in state.players) {
+        if (id === state.myPlayerId) continue;
+        const p = state.players[id];
+        if (p.targetX !== undefined) {
+            p.x += (p.targetX - p.x) * 10 * deltaTime;
+            p.y += (p.targetY - p.y) * 10 * deltaTime;
+        }
+    }
     const interpolationAmount = Math.min(deltaTime / constants.REMOTE_INTERPOLATION_SECONDS, 1);
 
     Object.values(state.players).forEach(player => {
@@ -144,12 +153,16 @@ export function updatePlayer(deltaTime) {
     state.supportedPlatformId = onGround && supportPlatform ? supportPlatform.id : null;
     
     // Send position to server
-    socket.emit('playerMove', {
+    const now = Date.now();
+    if (now - lastEmitTime > 50) {
+        lastEmitTime = now;
+        socket.emit('playerMove', {
         x: player.x,
         y: player.y,
         velocityX: player.velocityX,
         velocityY: player.velocityY
     });
+    }
 }
 
 export function checkCollisions() {

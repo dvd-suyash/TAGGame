@@ -633,6 +633,28 @@ function prepareRound(roomCode) {
     startRoundCountdown(roomCode);
 }
 
+
+// Network optimization: 20Hz world update loop
+setInterval(() => {
+    for (const roomCode in rooms) {
+        const room = rooms[roomCode];
+        if (!room || room.players.length === 0) continue;
+
+        // Pack players into Float32Array: [playerNumber, x, y, velocityX, velocityY, isIt]
+        const buffer = new Float32Array(room.players.length * 6);
+        for (let i = 0; i < room.players.length; i++) {
+            const p = room.players[i];
+            buffer[i * 6 + 0] = p.number;
+            buffer[i * 6 + 1] = p.x;
+            buffer[i * 6 + 2] = p.y;
+            buffer[i * 6 + 3] = p.velocityX;
+            buffer[i * 6 + 4] = p.velocityY;
+            buffer[i * 6 + 5] = p.isIt ? 1 : 0;
+        }
+        io.to(roomCode).emit('tick', buffer.buffer);
+    }
+}, 50);
+
 io.on('connection', (socket) => {
     console.log('Player connected:', socket.id);
 
@@ -723,7 +745,7 @@ io.on('connection', (socket) => {
             player.velocityY = data.velocityY;
             
             // Broadcast to other players
-            socket.to(socket.roomCode).emit('playerMoved', player);
+            // Broadcast moved to 20Hz tick
 
             const activeTagPair = getActiveTagPair(room);
             if (activeTagPair) {
