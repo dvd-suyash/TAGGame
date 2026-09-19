@@ -102,23 +102,24 @@ if (ui.playAgainBtn) {
 }
 
 
-// --- Socket Events specific to Lobby ---
+// --- Socket Events ---
 socket.on('roomCreated', (roomCode) => {
     state.currentRoomCode = roomCode;
-    state.isHost = true; // First person is host
+    state.isHost = true;
     setActiveScreen('lobbyScreen');
     renderLobbyUI(true);
 });
 
-socket.on('roomJoined', (room) => {
-    state.currentRoomCode = room.id;
-    state.selectedMaxPlayers = room.maxPlayers;
-    state.selectedMapId = room.mapId;
+socket.on('roomJoined', (data) => {
+    state.myPlayerId = socket.id;
+    state.myPlayerNumber = data.playerNumber;
+    state.currentRoomCode = data.roomCode;
+    state.selectedMaxPlayers = data.maxPlayers;
+    state.selectedMapId = data.mapId;
     state.isHost = false; 
     
-    // Check if we are the host based on players list (if our ID is the first one, or if server sets it)
-    // For simplicity, room creator is usually first in array.
-    if(room.players[0] && room.players[0].id === state.myPlayerId) {
+    // Check if we are host based on player array
+    if(data.players && data.players[0] && data.players[0].id === socket.id) {
         state.isHost = true;
     }
     
@@ -133,17 +134,13 @@ socket.on('roomSettingsUpdated', (settings) => {
 });
 
 socket.on('playerListUpdate', (players) => {
-    // Rebuild state.players from the server list
     state.players = {};
     players.forEach(p => {
         state.players[p.id] = p;
     });
-    
-    // Determine if we are host (if we are the first player)
-    if(players[0] && players[0].id === state.myPlayerId) {
+    if(players[0] && players[0].id === socket.id) {
         state.isHost = true;
     }
-    
     if (document.getElementById('lobbyScreen').classList.contains('active')) {
         renderLobbyUI(state.isHost);
     }
@@ -153,21 +150,20 @@ socket.on('error', (message) => {
     showError(message);
 });
 
-socket.on('gameInit', (data) => {
-    state.currentMapId = data.mapId;
-    state.players = data.players;
-    
-    initPlatforms(state.currentMapId);
-    initializePlayers(data.players);
-    
+// -- Game Events --
+socket.on('gameStart', (playerData) => {
+    state.currentMapId = playerData.mapId || state.selectedMapId;
     state.gameStarted = true;
     state.gameOver = false;
     state.roundActive = false;
     state.roundMotionStartTime = null;
     
+    initializePlayers(playerData.players || Object.values(state.players));
+    initPlatforms(state.currentMapId);
+    
     setActiveScreen('gameScreen');
     hideGameOverScreen();
-    hideRoundBanner();
+    showRoundBanner("GET READY");
     
     if (!state.animationFrameId) {
         state.lastFrameTime = performance.now();
@@ -175,49 +171,84 @@ socket.on('gameInit', (data) => {
     }
 });
 
-socket.on('countdown', (count) => {
-    if (count > 0) {
-        showRoundBanner(count.toString());
-    } else if (count === 0) {
+socket.on('roundCountdown', (secondsRemaining) => {
+    state.roundActive = false;
+    if (secondsRemaining > 0) {
+        showRoundBanner(secondsRemaining.toString());
+    } else {
         showRoundBanner("GO!");
-        setTimeout(() => {
-            hideRoundBanner();
-        }, 1000);
+        setTimeout(() => hideRoundBanner(), 1000);
     }
 });
 
-socket.on('roundStart', () => {
+socket.on('roundLive', () => {
     state.roundActive = true;
     state.roundMotionStartTime = performance.now();
+    hideRoundBanner();
 });
 
-socket.on('roleUpdate', (playersData) => {
-    state.players = playersData;
+socket.on('tagOccurred', (data) => {
+    data.players.forEach(player => {
+        if (state.players[player.id]) {
+            Object.assign(state.players[player.id], player);
+        }
+    });
     updateRoleDisplay();
 });
 
-socket.on('timerUpdate', (timeLeft) => {
-    state.timeRemaining = timeLeft;
+socket.on('timerUpdate', (secondsRemaining) => {
+    state.timeRemaining = secondsRemaining;
     updateTimerDisplay();
 });
 
-socket.on('gameOver', (data) => {
-    state.roundActive = false;
-    state.gameOver = true;
-    showGameOverScreen(data.loser);
-});
+socket.on('tick', (buffer) => {
+    if (!state.roundActive) return;
+    const view = new Float32Array(buffer);
+    for (let i = 0; i < view.length; i += 6) {
+        const pNumber = view[i];
+        const px = view[i + 1];
+        const py = view[i + 2];
+        const pvx = view[i + 3];
+        const pvy = view[i + 4];
+        const pisIt = view[i + 5] === 1;
 
-
-// --- Key Listeners ---
-window.addEventListener('keydown', (e) => {
-    if (e.target.tagName.toLowerCase() === 'input') return; // Don't steal from inputs
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        state.keys[e.key] = true;
+        const targetPlayer = Object.values(state.players).find(p => p.number === pNumber);
+        if (targetPlayer && targetPlayer.id !== socket.id) {
+            targetPlayer.targetX = px;
+            targetPlayer.targetY = py;
+            targetPlayer.velocityX = pvx;
+            targetPlayer.velocityY = pvy;
+            targetPlayer.isIt = pisIt;
+        }
     }
 });
 
+socket.on('gameOver', (data) => {
+    state.gameStarted = false;
+    state.gameOver = true;
+    state.roundActive = false;
+    state.timeRemaining = 0;
+    updateTimerDisplay();
+    hideRoundBanner();
+    showGameOverScreen(data.loser || data.loserId);
+});
+
+socket.on('playerLeft', () => {
+    showError('Other player left the game');
+    setTimeout(() => {
+        location.reload();
+    }, 2000);
+});
+
+// --- Key Listeners ---
+window.addEventListener('keydown', (e) => {
+    if (e.target.tagName.toLowerCase() === 'input') return;
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        state.keys[e.key] = true;
+    }
+});
 window.addEventListener('keyup', (e) => {
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
         state.keys[e.key] = false;
     }
 });
@@ -225,13 +256,9 @@ window.addEventListener('keyup', (e) => {
 // --- Game Loop ---
 export function gameLoop(currentTime) {
     state.animationFrameId = requestAnimationFrame(gameLoop);
-    
     if (!state.gameStarted) return;
-    
     const deltaTime = (currentTime - state.lastFrameTime) / 1000;
     state.lastFrameTime = currentTime;
-    
-    // Cap deltaTime to avoid massive jumps
     if (deltaTime > 0.1) return;
     
     if (state.roundActive) {
@@ -239,7 +266,6 @@ export function gameLoop(currentTime) {
         updatePlayer(deltaTime);
         checkCollisions();
     }
-    
     updateRemotePlayers(deltaTime);
     draw();
 }
