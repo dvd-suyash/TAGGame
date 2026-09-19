@@ -18,7 +18,11 @@ export function setActiveScreen(screenId, pushHistory = true) {
     });
     
     if (pushHistory) {
-        window.history.pushState({ screenId }, "", "#" + screenId);
+        try {
+            window.history.pushState({ screenId }, "", "#" + screenId);
+        } catch(e) {
+            console.warn("History pushState failed (likely running via file://)", e);
+        }
     }
 }
 
