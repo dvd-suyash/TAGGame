@@ -242,15 +242,24 @@ socket.on('playerLeft', () => {
 
 // --- Key Listeners ---
 window.addEventListener('keydown', (e) => {
-    if (e.target.tagName.toLowerCase() === 'input') return;
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        state.keys[e.key] = true;
+    if (e.target && e.target.tagName && e.target.tagName.toLowerCase() === 'input') return;
+    const key = e.key.toLowerCase();
+    
+    if (key === 'arrowleft' || key === 'a') state.keys['ArrowLeft'] = true;
+    if (key === 'arrowright' || key === 'd') state.keys['ArrowRight'] = true;
+    if (key === 'arrowdown' || key === 's') state.keys['ArrowDown'] = true;
+    
+    if (key === 'arrowup' || key === 'w' || key === ' ') {
+        state.jumpBufferTime = 0.1; // allows bunny hopping if held
+        state.keys['ArrowUp'] = true;
     }
 });
 window.addEventListener('keyup', (e) => {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        state.keys[e.key] = false;
-    }
+    const key = e.key.toLowerCase();
+    if (key === 'arrowleft' || key === 'a') state.keys['ArrowLeft'] = false;
+    if (key === 'arrowright' || key === 'd') state.keys['ArrowRight'] = false;
+    if (key === 'arrowdown' || key === 's') state.keys['ArrowDown'] = false;
+    if (key === 'arrowup' || key === 'w' || key === ' ') state.keys['ArrowUp'] = false;
 });
 
 // --- Game Loop ---
