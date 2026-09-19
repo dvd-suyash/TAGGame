@@ -434,6 +434,7 @@ button {
         gap: 0.5rem;
         height: 100dvh;
         justify-content: center;
+        align-items: center;
     }
     .room-code-title {
         font-size: 2rem;
