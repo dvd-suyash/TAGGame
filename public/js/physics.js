@@ -85,10 +85,8 @@ export function updateBots(deltaTime) {
     const bots = Object.values(state.players).filter(p => p.isBot);
     bots.forEach(bot => {
         const botKeys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false };
-        if (!bot.aiState) bot.aiState = { jumpBufferTime: 0, coyoteTime: 0 };
+        if (!bot.aiState) bot.aiState = { jumpBufferTime: 0, coyoteTime: 0, stuckTime: 0, wanderDir: 1, lastX: bot.x, wandering: false, panicTime: 0 };
         
-        // --- AI LOGIC ---
-        // Find nearest player to target
         let target = null;
         let minDist = Infinity;
         Object.values(state.players).forEach(p => {
@@ -105,35 +103,75 @@ export function updateBots(deltaTime) {
             }
         });
 
-        if (target) {
-            const dx = target.x - bot.x;
-            const dy = target.y - bot.y;
+        let dx = 0;
+        let dy = 0;
+
+        if (bot.aiState.panicTime > 0) {
+            bot.aiState.panicTime -= deltaTime;
+            if (bot.aiState.wanderDir > 0) botKeys.ArrowRight = true;
+            else botKeys.ArrowLeft = true;
             
-            if (bot.isIt) {
-                if (dx > 20) botKeys.ArrowRight = true;
-                else if (dx < -20) botKeys.ArrowLeft = true;
-            } else {
-                if (dx > 0) botKeys.ArrowLeft = true;
-                else botKeys.ArrowRight = true;
+            // Randomly jump while panicking
+            if (Math.random() < 0.05) botKeys.ArrowUp = true;
+            
+        } else if (target) {
+            dx = target.x - bot.x;
+            dy = target.y - bot.y;
+            
+            // If target is on our level, stop wandering
+            if (Math.abs(dy) <= 40) {
+                bot.aiState.wandering = false;
+            } else if (Math.abs(dx) < 50) {
+                // If target is above/below and we are directly under/over them, start wandering
+                bot.aiState.wandering = true;
             }
 
-            // Jump if stuck horizontally
-            if ((botKeys.ArrowLeft || botKeys.ArrowRight) && Math.abs(bot.velocityX) < 10) {
-                if (Math.random() < 0.1) botKeys.ArrowUp = true;
+            if (bot.aiState.wandering) {
+                if (bot.aiState.wanderDir > 0) botKeys.ArrowRight = true;
+                else botKeys.ArrowLeft = true;
+            } else {
+                if (bot.isIt) {
+                    if (dx > 0) botKeys.ArrowRight = true;
+                    else botKeys.ArrowLeft = true;
+                    bot.aiState.wanderDir = dx > 0 ? 1 : -1;
+                } else {
+                    if (dx > 0) botKeys.ArrowLeft = true;
+                    else botKeys.ArrowRight = true;
+                    bot.aiState.wanderDir = dx > 0 ? -1 : 1;
+                }
             }
-            // Jump if target is significantly higher
-            if (bot.isIt && dy < -80 && Math.abs(dx) < 150) {
-                if (Math.random() < 0.05) botKeys.ArrowUp = true;
+        }
+
+        const actualMoveX = Math.abs(bot.x - bot.aiState.lastX);
+        const isTryingToMove = botKeys.ArrowLeft || botKeys.ArrowRight;
+        
+        if (isTryingToMove && actualMoveX < 0.1) {
+            bot.aiState.stuckTime += deltaTime;
+        } else {
+            bot.aiState.stuckTime = 0;
+        }
+
+        if (bot.aiState.stuckTime > 0.1) {
+            if (Math.random() < 0.3) botKeys.ArrowUp = true;
+            
+            if (bot.aiState.stuckTime > 0.4 && bot.aiState.panicTime <= 0) {
+                bot.aiState.wanderDir *= -1;
+                bot.aiState.wandering = true;
+                bot.aiState.panicTime = 1.0; // Panic for 1 second!
+                bot.aiState.stuckTime = 0;
+                botKeys.ArrowUp = true;
             }
+        }
+        
+        if (bot.isIt && dy < -60 && Math.abs(dx) < 100) {
+            if (Math.random() < 0.1) botKeys.ArrowUp = true;
         }
 
         if (botKeys.ArrowUp && bot.aiState.lastJump !== true) {
             bot.aiState.jumpBufferTime = 0.1;
         }
         bot.aiState.lastJump = botKeys.ArrowUp;
-        // ----------------
         
-        // --- PHYSICS ---
         const wasGrounded = bot.aiState.coyoteTime > 0;
         const targetVelocityX = botKeys.ArrowLeft ? -constants.MOVE_SPEED : botKeys.ArrowRight ? constants.MOVE_SPEED : 0;
         
@@ -161,8 +199,8 @@ export function updateBots(deltaTime) {
             const collisionResult = resolveSolidPlatformCollisions(bot);
             onGround = collisionResult.onGround || onGround;
 
-            if (bot.x < constants.MAP_BOUNDS.left) bot.x = constants.MAP_BOUNDS.left;
-            if (bot.x > constants.MAP_BOUNDS.right - constants.PLAYER_SIZE) bot.x = constants.MAP_BOUNDS.right - constants.PLAYER_SIZE;
+            if (bot.x < constants.MAP_BOUNDS.left) { bot.x = constants.MAP_BOUNDS.left; bot.velocityX = 0; }
+            if (bot.x > constants.MAP_BOUNDS.right - constants.PLAYER_SIZE) { bot.x = constants.MAP_BOUNDS.right - constants.PLAYER_SIZE; bot.velocityX = 0; }
             if (bot.y > constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE) {
                 bot.y = constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE;
                 bot.velocityY = 0;
@@ -170,6 +208,7 @@ export function updateBots(deltaTime) {
             }
         }
         
+        bot.aiState.lastX = bot.x;
         bot.aiState.jumpBufferTime = Math.max(0, bot.aiState.jumpBufferTime - deltaTime);
         bot.aiState.coyoteTime = onGround ? constants.COYOTE_TIME_SECONDS : Math.max(0, bot.aiState.coyoteTime - deltaTime);
 
@@ -179,9 +218,7 @@ export function updateBots(deltaTime) {
             bot.aiState.coyoteTime = 0;
             onGround = false;
         }
-        // ---------------
         
-        // Emit to server
         const now = Date.now();
         if (!bot.aiState.lastEmitTime || now - bot.aiState.lastEmitTime > 50) {
             bot.aiState.lastEmitTime = now;
