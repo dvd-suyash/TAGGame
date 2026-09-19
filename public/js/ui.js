@@ -47,7 +47,6 @@ export function setActiveScreen(screenId, pushToHistory = true) {
     if (pushToHistory) {
         history.pushState({ screenId }, "", "#" + screenId);
     }
-});
 }
 
 export function updateLobbySummaries() {
