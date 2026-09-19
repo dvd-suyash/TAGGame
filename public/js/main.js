@@ -43,9 +43,13 @@ if (state.gameStarted) {
 const btnHostMatch = document.getElementById('btnHostMatch');
 if (btnHostMatch) {
     btnHostMatch.addEventListener('click', () => {
-        state.selectedMaxPlayers = 4;
-        state.selectedMapId = 'map1';
-        socket.emit('createRoom', { maxPlayers: 4, mapId: 'map1', roundDuration: 75 });
+        try {
+            state.selectedMaxPlayers = 4;
+            state.selectedMapId = 'map1';
+            socket.emit('createRoom', { maxPlayers: 4, mapId: 'map1', roundDuration: 75 });
+        } catch(e) {
+            import('./ui.js').then(module => module.showError(e.toString()));
+        }
     });
 }
 
@@ -127,10 +131,14 @@ if (ui.playAgainBtn) {
 
 // --- Socket Events ---
 socket.on('roomCreated', (roomCode) => {
-    state.currentRoomCode = roomCode;
-    state.isHost = true;
-    setActiveScreen('lobbyScreen');
-    renderLobbyUI(true);
+    try {
+        state.currentRoomCode = roomCode;
+        state.isHost = true;
+        setActiveScreen('lobbyScreen');
+        renderLobbyUI(true);
+    } catch(e) {
+        showError(e.toString());
+    }
 });
 
 socket.on('roomJoined', (data) => {
