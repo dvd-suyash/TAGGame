@@ -654,6 +654,16 @@ setInterval(() => {
         const room = rooms[roomCode];
         if (!room || room.players.length === 0) continue;
 
+        if (room.roundLive && !room.gameEnded) {
+            const activeTagPair = getActiveTagPair(room);
+            if (activeTagPair) {
+                const tagEvent = applyTag(room, activeTagPair.tagger.id, activeTagPair.tagged.id);
+                if (tagEvent) {
+                    io.to(roomCode).emit('tagOccurred', tagEvent);
+                }
+            }
+        }
+
         // Pack players into Float32Array: [playerNumber, x, y, velocityX, velocityY, isIt]
         const buffer = new Float32Array(room.players.length * 6);
         for (let i = 0; i < room.players.length; i++) {
@@ -789,13 +799,6 @@ io.on('connection', (socket) => {
             // Broadcast to other players
             // Broadcast moved to 20Hz tick
 
-            const activeTagPair = getActiveTagPair(room);
-            if (activeTagPair) {
-                const tagEvent = applyTag(room, activeTagPair.tagger.id, activeTagPair.tagged.id);
-                if (tagEvent) {
-                    io.to(socket.roomCode).emit('tagOccurred', tagEvent);
-                }
-            }
         }
     });
 
