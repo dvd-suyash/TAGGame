@@ -3,12 +3,13 @@ export function initHeroAnimation() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d', { alpha: true });
 
-    let width, height;
+    let width, height, isMobile;
     function resize() {
         width = window.innerWidth;
         height = window.innerHeight;
         canvas.width = width;
         canvas.height = height;
+        isMobile = width <= 768;
     }
     window.addEventListener('resize', resize);
     resize();
@@ -30,20 +31,50 @@ export function initHeroAnimation() {
         }
 
         pickNewTarget() {
-            this.targetX = 50 + Math.random() * (width - 100);
-            this.targetY = 50 + Math.random() * (height - 100);
+            let tx, ty;
+            let valid = false;
+            
+            // Try to pick a target outside the text box on desktop
+            for (let i = 0; i < 10; i++) {
+                tx = 50 + Math.random() * (width - 100);
+                ty = 50 + Math.random() * (height - 100);
+                
+                if (isMobile) {
+                    valid = true;
+                    break;
+                } else {
+                    // Desktop keep-out zone: center 600x400
+                    const inZone = tx > width/2 - 350 && tx < width/2 + 350 && 
+                                   ty > height/2 - 250 && ty < height/2 + 250;
+                    if (!inZone) {
+                        valid = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (!valid) {
+                // Fallback to edges
+                if (Math.random() < 0.5) {
+                    tx = Math.random() < 0.5 ? 50 : width - 50;
+                    ty = Math.random() * height;
+                } else {
+                    tx = Math.random() * width;
+                    ty = Math.random() < 0.5 ? 50 : height - 50;
+                }
+            }
+
+            this.targetX = tx;
+            this.targetY = ty;
             
             const r = Math.random();
             if (r < 0.3) {
-                // Dash (fast, sharp turns)
                 this.targetSpeed = 7 + Math.random() * 4;
                 this.turnFlexibility = 0.1; 
             } else if (r < 0.7) {
-                // Wander (slow, sweeping curves)
                 this.targetSpeed = 2 + Math.random() * 2;
                 this.turnFlexibility = 0.02;
             } else {
-                // Erratic
                 this.targetSpeed = 4 + Math.random() * 3;
                 this.turnFlexibility = 0.2;
             }
@@ -54,7 +85,6 @@ export function initHeroAnimation() {
             const dy = this.targetY - this.y;
             const dist = Math.hypot(dx, dy);
 
-            // Reached target or randomly decide to change course
             if (dist < 50 || Math.random() < 0.01) {
                 this.pickNewTarget();
             }
@@ -65,10 +95,26 @@ export function initHeroAnimation() {
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
 
-            // Turn towards target, adding a tiny bit of random noise for natural feeling
             this.angle += diff * this.turnFlexibility + (Math.random() - 0.5) * 0.05;
 
-            // Smooth speed transitions
+            // Desktop ONLY: Add a repulsion force if they wander into the center text zone
+            if (!isMobile) {
+                const cx = width / 2;
+                const cy = height / 2;
+                const distToCenter = Math.hypot(this.x - cx, this.y - cy);
+                if (distToCenter < 350) {
+                    // Steer AWAY from center
+                    const repelAngle = Math.atan2(this.y - cy, this.x - cx);
+                    let repelDiff = repelAngle - this.angle;
+                    while (repelDiff < -Math.PI) repelDiff += Math.PI * 2;
+                    while (repelDiff > Math.PI) repelDiff -= Math.PI * 2;
+                    
+                    // The closer to center, the stronger the repulsion
+                    const force = (350 - distToCenter) / 350; 
+                    this.angle += repelDiff * force * 0.1;
+                }
+            }
+
             this.speed += (this.targetSpeed - this.speed) * 0.05;
 
             this.x += Math.cos(this.angle) * this.speed;
@@ -79,7 +125,6 @@ export function initHeroAnimation() {
                 this.history.shift();
             }
 
-            // Red follows exactly at the end of the tail
             if (this.history.length > 0) {
                 const tail = this.history[0];
                 this.redX = tail.x;
