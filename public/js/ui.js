@@ -12,10 +12,14 @@ if(ui.canvas) {
     ui.canvas.height = 700;
 }
 
-export function setActiveScreen(screenId) {
+export function setActiveScreen(screenId, pushHistory = true) {
     document.querySelectorAll('.screen').forEach(screen => {
         screen.classList.toggle('active', screen.id === screenId);
     });
+    
+    if (pushHistory) {
+        window.history.pushState({ screenId }, "", "#" + screenId);
+    }
 }
 
 export function showError(message) {

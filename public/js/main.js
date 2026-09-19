@@ -6,6 +6,29 @@ import { getMapDefinition, initPlatforms, updatePlatforms } from './map.js';
 import { initializePlayers, updateRemotePlayers, updatePlayer, checkCollisions, updateBots, initBotAI, recordPlayerInputs } from './physics.js';
 import { draw } from './render.js';
 
+
+// --- History API for Browser Back Button ---
+window.history.replaceState({ screenId: 'homeScreen' }, "", "#homeScreen");
+window.addEventListener('popstate', (e) => {
+    if (e.state && e.state.screenId) {
+        setActiveScreen(e.state.screenId, false);
+        if (e.state.screenId === 'homeScreen') {
+            socket.emit('leaveRoom');
+            state.roundActive = false;
+            state.gameStarted = false;
+            hideGameOverScreen();
+            
+            // Re-enable join inputs
+            document.getElementById('playerName').disabled = false;
+            document.getElementById('roomCode').disabled = false;
+            document.getElementById('btnHost').disabled = false;
+            document.getElementById('btnJoin').disabled = false;
+        }
+    }
+});
+// -------------------------------------------
+
+
 // Setup basic map definitions array for host to cycle through
 const availableMaps = ['map1', 'map2', 'map3', 'map4', 'map5'];
 
