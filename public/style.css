@@ -58,12 +58,14 @@ body {
     position: absolute;
     top: 0;
     left: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 .screen.active {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     animation: screenIn 0.8s var(--ease-out) both;
 }
 
@@ -76,8 +78,9 @@ body {
 .hero-container {
     max-width: 72rem;
     width: 100%;
-    padding: 0 5vw;
+    padding: 4rem 5vw;
     text-align: center;
+    margin: 4rem auto;
 }
 .hero-title {
     font-size: clamp(4rem, 8vw, 8rem);
@@ -164,6 +167,7 @@ button {
     display: flex;
     flex-direction: column;
     gap: 2rem;
+    margin: 4rem auto;
 }
 .bento-header {
     text-align: center;
@@ -471,4 +475,19 @@ button {
     #joinCodeInput {
         width: 100%;
     }
+}
+
+/* Game Screen Layout Fixes */
+#gameScreen {
+    overflow: hidden;
+    padding: 0;
+    justify-content: center;
+}
+.hud-shell {
+    margin: auto;
+    width: 100%;
+    height: 100%;
+    max-width: 1400px;
+    max-height: 700px;
+    aspect-ratio: 2 / 1;
 }
