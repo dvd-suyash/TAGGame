@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { InputTrail, ShadowBotBrain } from './bot-ai.js';
+import { BreadcrumbTrail, BreadcrumbBot } from './bot-ai.js';
 import { ui } from './ui.js';
 import * as constants from './constants.js';
 import { socket } from './network.js';
@@ -80,56 +80,62 @@ export function updateRemotePlayers(deltaTime) {
 }
 
 
-let inputTrail = null;     // shared trail recorder
-let shadowBrains = {};     // keyed by bot.id
+let breadcrumbTrail = null;
+let breadcrumbBots = {};
 
 export function initBotAI() {
-    inputTrail = new InputTrail();
-    shadowBrains = {};
-    console.log('[Bot AI] Shadow Trail system initialized');
+    breadcrumbTrail = new BreadcrumbTrail();
+    breadcrumbBots = {};
+    console.log('[Bot AI] Breadcrumb Trail initialized');
 }
 
-/**
- * Record the player's inputs every frame.
- * Must be called from the game loop BEFORE updateBots.
- */
 export function recordPlayerInputs(dt) {
-    if (!inputTrail) return;
-    inputTrail.record(state.keys, dt);
+    if (!breadcrumbTrail || !state.players[state.myPlayerId]) return;
+    const me = state.players[state.myPlayerId];
+    breadcrumbTrail.record(me, dt, state.keys);
 }
 
 export function updateBots(deltaTime) {
     if (!state.isHost) return;
-    if (!inputTrail) initBotAI();
+    if (!breadcrumbTrail) initBotAI();
     
     const bots = Object.values(state.players).filter(p => p.isBot);
-    bots.forEach((bot, botIndex) => {
+    bots.forEach(bot => {
         if (!bot.aiState) bot.aiState = { jumpBufferTime: 0, coyoteTime: 0, lastX: bot.x };
         
-        // Lazily create a ShadowBotBrain with staggered delays
-        if (!shadowBrains[bot.id]) {
-            // Each bot follows at a slightly different delay so they don't stack
-            const delayOffset = botIndex * 1.0; // 1 second apart
-            shadowBrains[bot.id] = new ShadowBotBrain(inputTrail, delayOffset);
+        if (!breadcrumbBots[bot.id]) {
+            breadcrumbBots[bot.id] = new BreadcrumbBot(breadcrumbTrail);
         }
-        const brain = shadowBrains[bot.id];
+        const brain = breadcrumbBots[bot.id];
 
-        // Find the target (for reference, though shadow bot mostly ignores it)
         let target = null;
+        let minDist = Infinity;
         Object.values(state.players).forEach(p => {
-            if (p.id === bot.id || p.isBot) return;
-            target = p;
+            if (p.id === bot.id) return;
+            if (bot.isIt && p.isIt) return;
+            if (!bot.isIt && !p.isIt) return;
+            
+            const dx = p.x - bot.x;
+            const dy = p.y - bot.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < minDist) {
+                minDist = dist;
+                target = p;
+            }
         });
 
-        // Get replayed inputs from the trail
-        const input = brain.think(bot, target, deltaTime);
-        
-        let botKeys = { ArrowLeft: input.left, ArrowRight: input.right, ArrowUp: false };
-        
-        if (input.jump && bot.aiState.lastJump !== true) {
-            bot.aiState.jumpBufferTime = 0.1;
+        let botKeys = { ArrowLeft: false, ArrowRight: false, ArrowUp: false };
+
+        if (target) {
+            const input = brain.think(bot, target, deltaTime, bot.isIt);
+            botKeys.ArrowLeft = input.left;
+            botKeys.ArrowRight = input.right;
+            
+            if (input.jump && bot.aiState.lastJump !== true) {
+                bot.aiState.jumpBufferTime = 0.1;
+            }
+            bot.aiState.lastJump = input.jump;
         }
-        bot.aiState.lastJump = input.jump;
         
         // --- PHYSICS (identical to player physics) ---
         const wasGrounded = bot.aiState.coyoteTime > 0;
@@ -179,7 +185,6 @@ export function updateBots(deltaTime) {
             onGround = false;
         }
         
-        // Emit to server
         const now = Date.now();
         if (!bot.aiState.lastEmitTime || now - bot.aiState.lastEmitTime > 50) {
             bot.aiState.lastEmitTime = now;

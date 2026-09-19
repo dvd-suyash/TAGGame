@@ -1,149 +1,155 @@
 /**
- * Bot AI v4 — Shadow Trail (Input Playback)
- * ==========================================
- * Used by: Celeste (Badeline), Awesomenauts, Pac-Man CE
- *
- * Instead of pathfinding, we record the player's INPUTS (left, right, jump)
- * every frame into a circular buffer. The bot replays those exact inputs
- * with a configurable time delay.
- *
- * Why this works perfectly:
- *   - If the player reached a platform, the bot WILL reach it too
- *   - Zero pathfinding bugs — the bot literally follows your footsteps
- *   - The delay creates natural urgency — shorter delay = harder game
- *   - It feels like something is stalking you, which is terrifying
- *
- * The bot uses the same physics engine as the player, so it moves
- * identically. No teleporting, no cheating.
+ * Bot AI v5 — Breadcrumb Trail Tracker
+ * =====================================
+ * The ultimate solution requested by the user: "trace my path".
+ * 
+ * 1. The human player leaves a trail of breadcrumbs (X, Y, isJumping).
+ * 2. Bots find the nearest breadcrumb to their current position.
+ * 3. They target a breadcrumb slightly ahead on the trail.
+ * 4. They simply move towards that breadcrumb. If it's higher, they jump!
+ * 5. If they get stuck (e.g., trying to reach a breadcrumb they aren't on the path for),
+ *    they use a panic-juke to unstuck themselves.
  */
 
 import * as constants from './constants.js';
 
-// ─── CONFIG ─────────────────────────────────────────────────────────────────
-const TRAIL_CFG = {
-    trailDelay:     2.5,    // seconds behind the player (lower = harder)
-    maxTrailLength: 600,    // frames of history (~10 seconds at 60fps)
-    sampleInterval: 1 / 60, // record every frame at 60fps
-    wanderChance:   0.003,  // small chance per frame to deviate slightly
-    wanderDuration: 0.3,    // how long a wander deviation lasts
+const CFG = {
+    crumbInterval: 0.05, // drop a crumb every 50ms
+    trailDuration: 15,   // keep 15 seconds of trail
+    targetAhead: 5,      // target the crumb 5 steps ahead (to smooth out movement)
+    catchupDist: 30,     // if within 30px, consider crumb reached
 };
 
-// ─── INPUT TRAIL RECORDER ───────────────────────────────────────────────────
-
-export class InputTrail {
+export class BreadcrumbTrail {
     constructor() {
-        this.buffer = [];       // Array of { time, left, right, jump }
-        this.currentTime = 0;
+        this.crumbs = [];
+        this.timeSinceLastCrumb = 0;
     }
 
-    /**
-     * Record the player's current input state. Call every frame.
-     * @param {object} keys  - the player's key state { ArrowLeft, ArrowRight, ArrowUp }
-     * @param {number} dt    - delta time in seconds
-     */
-    record(keys, dt) {
-        this.currentTime += dt;
+    record(player, dt, keys) {
+        this.timeSinceLastCrumb += dt;
+        if (this.timeSinceLastCrumb >= CFG.crumbInterval) {
+            this.timeSinceLastCrumb = 0;
+            this.crumbs.push({
+                x: player.x,
+                y: player.y,
+                jump: !!keys['ArrowUp']
+            });
 
-        this.buffer.push({
-            time: this.currentTime,
-            left:  !!keys['ArrowLeft'],
-            right: !!keys['ArrowRight'],
-            jump:  !!keys['ArrowUp'],
-        });
-
-        // Trim old entries beyond max trail length
-        while (this.buffer.length > TRAIL_CFG.maxTrailLength) {
-            this.buffer.shift();
-        }
-    }
-
-    /**
-     * Read inputs from `delay` seconds ago.
-     * @param {number} delay - seconds behind current time
-     * @returns {{ left: boolean, right: boolean, jump: boolean }}
-     */
-    readAt(delay) {
-        const targetTime = this.currentTime - delay;
-
-        if (this.buffer.length === 0 || targetTime < this.buffer[0].time) {
-            // Not enough history yet — return idle
-            return { left: false, right: false, jump: false };
-        }
-
-        // Binary search for the closest frame
-        let lo = 0;
-        let hi = this.buffer.length - 1;
-
-        while (lo < hi) {
-            const mid = (lo + hi) >> 1;
-            if (this.buffer[mid].time < targetTime) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
+            const maxCrumbs = (CFG.trailDuration / CFG.crumbInterval);
+            if (this.crumbs.length > maxCrumbs) {
+                this.crumbs.shift();
             }
         }
-
-        const entry = this.buffer[lo];
-        return {
-            left:  entry.left,
-            right: entry.right,
-            jump:  entry.jump,
-        };
     }
 
-    /**
-     * Get the total seconds of recorded trail.
-     */
-    getDuration() {
-        if (this.buffer.length < 2) return 0;
-        return this.buffer[this.buffer.length - 1].time - this.buffer[0].time;
+    getNearestIndex(botX, botY) {
+        if (this.crumbs.length === 0) return -1;
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let i = 0; i < this.crumbs.length; i++) {
+            const c = this.crumbs[i];
+            const dist = Math.hypot(c.x - botX, c.y - botY);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx = i;
+            }
+        }
+        return bestIdx;
     }
 }
 
-
-// ─── SHADOW BOT BRAIN ───────────────────────────────────────────────────────
-
-export class ShadowBotBrain {
-    /**
-     * @param {InputTrail} trail - shared trail recorder (one per game)
-     * @param {number} delayOffset - additional delay offset for this specific bot
-     *                               (so multiple bots don't stack on each other)
-     */
-    constructor(trail, delayOffset = 0) {
+export class BreadcrumbBot {
+    constructor(trail) {
         this.trail = trail;
-        this.delay = TRAIL_CFG.trailDelay + delayOffset;
-        this.wanderTimer = 0;
-        this.wanderDir = 0; // -1 or 1
-        this.lastJump = false;
+        this.stuckTime = 0;
+        this.lastX = 0;
+        this.lastY = 0;
+        this.panicTimer = 0;
+        this.panicDir = 1;
+        this.wanderDir = Math.random() < 0.5 ? 1 : -1;
     }
 
-    /**
-     * Called every frame. Returns virtual key presses.
-     * @param {object} bot    - { x, y, velocityX, velocityY, isIt }
-     * @param {object} target - { x, y } (the player)
-     * @param {number} dt     - seconds
-     * @returns {{ left: boolean, right: boolean, jump: boolean }}
-     */
-    think(bot, target, dt) {
-        // Read the player's inputs from `delay` seconds ago
-        const replay = this.trail.readAt(this.delay);
+    think(bot, target, dt, isChasing) {
+        // ── Stuck detection ──
+        const moved = Math.hypot(bot.x - this.lastX, bot.y - this.lastY);
+        if (moved < 2) {
+            this.stuckTime += dt;
+        } else {
+            this.stuckTime = 0;
+        }
+        this.lastX = bot.x;
+        this.lastY = bot.y;
 
-        // ── Occasional wander for personality ──
-        this.wanderTimer -= dt;
-        if (this.wanderTimer <= 0 && Math.random() < TRAIL_CFG.wanderChance) {
-            this.wanderDir = Math.random() < 0.5 ? -1 : 1;
-            this.wanderTimer = TRAIL_CFG.wanderDuration;
+        if (this.stuckTime > 0.4 && this.panicTimer <= 0) {
+            this.panicTimer = 0.8;
+            this.panicDir = Math.random() < 0.5 ? 1 : -1;
+            this.stuckTime = 0;
         }
 
-        let { left, right, jump } = replay;
-
-        // Apply slight wander deviation (makes bot feel alive, not robotic)
-        if (this.wanderTimer > 0) {
-            if (this.wanderDir < 0) { left = true; right = false; }
-            else { left = false; right = true; }
-            // Don't override jump during wander
+        if (this.panicTimer > 0) {
+            this.panicTimer -= dt;
+            return {
+                left: this.panicDir < 0,
+                right: this.panicDir > 0,
+                jump: Math.random() < 0.1
+            };
         }
 
-        return { left, right, jump };
+        // ── Breadcrumb Tracking ──
+        let targetX = target.x;
+        let targetY = target.y;
+        let shouldJump = false;
+
+        const nearestIdx = this.trail.getNearestIndex(bot.x, bot.y);
+        
+        if (nearestIdx !== -1) {
+            const nearestCrumb = this.trail.crumbs[nearestIdx];
+            const distToTrail = Math.hypot(bot.x - nearestCrumb.x, bot.y - nearestCrumb.y);
+
+            if (distToTrail < 150) {
+                // We are near the trail! Look ahead.
+                let targetIdx = Math.min(this.trail.crumbs.length - 1, nearestIdx + CFG.targetAhead);
+                const targetCrumb = this.trail.crumbs[targetIdx];
+                
+                targetX = targetCrumb.x;
+                targetY = targetCrumb.y;
+
+                // If the trail goes up significantly, JUMP!
+                if (targetCrumb.y < bot.y - 15) {
+                    shouldJump = true;
+                }
+                // Also copy the player's jump input if they jumped around this crumb
+                if (targetCrumb.jump) {
+                    shouldJump = true;
+                }
+            } else {
+                // We are far from the trail. Just wander towards the target.
+                const dy = target.y - bot.y;
+                if (Math.abs(dy) > 40) {
+                    // Target is on different level, just patrol to find edge
+                    targetX = bot.x + (this.wanderDir * 100);
+                    if (this.stuckTime > 0.1) this.wanderDir *= -1;
+                }
+            }
+        }
+
+        const dx = targetX - bot.x;
+
+        // Evasion logic if not IT
+        if (!isChasing) {
+            const evadeDx = bot.x - target.x;
+            return {
+                left: evadeDx < 0,
+                right: evadeDx > 0,
+                jump: shouldJump || Math.random() < 0.02
+            };
+        }
+
+        return {
+            left: dx < -10,
+            right: dx > 10,
+            jump: shouldJump
+        };
     }
 }
