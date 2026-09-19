@@ -48,32 +48,22 @@ export function initializePlayers(playerList, snap = true) {
 
 let lastEmitTime = 0;
 export function updateRemotePlayers(deltaTime) {
-    for (const id in state.players) {
-        if (id === state.myPlayerId) continue;
-        const p = state.players[id];
-        if (p.targetX !== undefined) {
-            p.x += (p.targetX - p.x) * 10 * deltaTime;
-            p.y += (p.targetY - p.y) * 10 * deltaTime;
-        }
-    }
     const interpolationAmount = Math.min(deltaTime / constants.REMOTE_INTERPOLATION_SECONDS, 1);
-
     Object.values(state.players).forEach(player => {
-        if (player.id === state.myPlayerId) {
+        const isLocalEntity = player.id === state.myPlayerId || (state.isHost && player.isBot);
+        if (isLocalEntity) {
             player.renderX = player.x;
             player.renderY = player.y;
             return;
         }
-
+        if (player.targetX !== undefined) {
+            player.x += (player.targetX - player.x) * 10 * deltaTime;
+            player.y += (player.targetY - player.y) * 10 * deltaTime;
+        }
         player.renderX = player.renderX ?? player.x;
         player.renderY = player.renderY ?? player.y;
         player.targetX = player.targetX ?? player.x;
         player.targetY = player.targetY ?? player.y;
-        if (Math.abs(player.targetX - player.renderX) > 180 || Math.abs(player.targetY - player.renderY) > 180) {
-            player.renderX = player.targetX;
-            player.renderY = player.targetY;
-            return;
-        }
         player.renderX += (player.targetX - player.renderX) * interpolationAmount;
         player.renderY += (player.targetY - player.renderY) * interpolationAmount;
     });
