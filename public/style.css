@@ -525,3 +525,90 @@ button {
         justify-content: center;
     }
 }
+
+/* --- CINEMATIC GAME OVER --- */
+.game-over-screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    backdrop-filter: blur(40px) saturate(0.5);
+    -webkit-backdrop-filter: blur(40px) saturate(0.5);
+    background: rgba(10, 10, 10, 0.85);
+    transition: all 0.5s ease;
+}
+
+.game-over-screen.outcome-winner {
+    background: radial-gradient(circle at center, rgba(20, 40, 20, 0.8), rgba(10, 10, 10, 0.95));
+}
+
+.game-over-screen.outcome-loser {
+    background: radial-gradient(circle at center, rgba(60, 10, 10, 0.8), rgba(10, 10, 10, 0.95));
+}
+
+.game-over-card {
+    background: transparent;
+    padding: 0;
+    border: none;
+    text-align: center;
+    width: 100%;
+    animation: zoomDrop 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes zoomDrop {
+    0% { opacity: 0; transform: scale(1.2); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+.game-over-label { display: none !important; }
+
+#gameOverTitle {
+    font-size: clamp(4rem, 15vw, 12rem);
+    font-weight: 900;
+    line-height: 0.85;
+    letter-spacing: -0.04em;
+    text-transform: uppercase;
+    margin: 0;
+    color: var(--paper);
+    padding: 0 5vw;
+}
+
+.outcome-loser #gameOverTitle {
+    color: var(--accent);
+}
+
+.game-over-player {
+    font-size: clamp(1.5rem, 4vw, 3rem);
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    margin-top: 2rem;
+    color: rgba(255,255,255,0.7);
+}
+
+.game-over-message {
+    font-size: clamp(1rem, 2vw, 1.5rem);
+    font-weight: 400;
+    color: rgba(255,255,255,0.5);
+    margin-top: 0.5rem;
+    margin-bottom: 4rem;
+}
+
+.play-again-btn {
+    background: var(--paper);
+    color: var(--ink);
+    border: none;
+    padding: 1.25rem 3rem;
+    font-size: 1.25rem;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    border-radius: 99px;
+    cursor: pointer;
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s;
+}
+
+.play-again-btn:hover {
+    transform: scale(1.05);
+    background: var(--accent);
+}

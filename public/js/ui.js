@@ -61,15 +61,23 @@ export function showGameOverScreen(loserId) {
     const loserLabel = loser
         ? (loserId === state.myPlayerId ? 'YOU' : `PLAYER ${loser.number}`)
         : 'UNKNOWN';
-    const resultTitle = iLost ? 'LOSER' : 'WINNER';
+        
+    const resultTitle = iLost ? 'TAGGED OUT.' : 'SURVIVED.';
+    const subtext = iLost ? 'TIME RAN OUT' : `${loserLabel} WAS IT`;
     const message = iLost
-        ? 'Time ran out while you were it.'
-        : `${loserLabel} was it when time ran out.`;
+        ? 'You failed to pass the tag.'
+        : 'You successfully evaded the tag.';
 
     document.getElementById('gameOverTitle').textContent = resultTitle;
-    document.getElementById('gameOverPlayer').textContent = iLost ? 'YOU' : loserLabel;
+    document.getElementById('gameOverPlayer').textContent = subtext;
     document.getElementById('gameOverMessage').textContent = message;
-    document.getElementById('gameOverScreen').classList.remove('hidden');
+    
+    const screen = document.getElementById('gameOverScreen');
+    screen.classList.remove('hidden');
+    
+    // Apply cinematic styling based on outcome
+    screen.classList.remove('outcome-winner', 'outcome-loser');
+    screen.classList.add(iLost ? 'outcome-loser' : 'outcome-winner');
 }
 
 export function hideGameOverScreen() {
