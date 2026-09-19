@@ -134,6 +134,7 @@ export function updatePlayer(deltaTime) {
         if (player.y > constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE) {
             player.y = constants.MAP_BOUNDS.bottom - constants.PLAYER_SIZE;
             player.velocityY = 0;
+            onGround = true;
         }
     }
     
