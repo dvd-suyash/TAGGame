@@ -3,113 +3,88 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tag - Multiplayer Game</title>
+    <title>TAG</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="playerCountScreen" class="screen active">
-        <div class="menu-shell selection-shell">
-            <p class="eyebrow">Choose Match Size</p>
-            <h1 class="title">TAG</h1>
-            <div class="selection-grid">
-                <button class="player-count-btn" data-player-count="4">4 Player</button>
-                <button class="player-count-btn" data-player-count="3">3 Player</button>
-                <button class="player-count-btn" data-player-count="2">2 Player</button>
-            </div>
-        </div>
-    </div>
+    <div class="mesh-bg"></div>
+    <div class="noise-overlay"></div>
 
-    <div id="mapScreen" class="screen">
-        <button class="back-btn" id="backToPlayerCountBtn">← Back</button>
-        <div class="menu-shell map-shell">
-            <p class="eyebrow">Choose Arena</p>
-            <h1 class="title">TAG</h1>
-            <p class="subtitle">Use two fingers on the trackpad or the mouse wheel to glide sideways through the maps. Tap a map to lock it in.</p>
-            <p id="mapCountSummary" class="selection-summary"></p>
-            <div class="map-scroll-shell">
-                <div id="mapCarousel" class="map-carousel">
-                    <button class="map-stage-card active" data-map-id="map1">
-                        <span class="map-stage-copy">Map 1</span>
-                        <strong class="map-stage-name">Classic</strong>
-                        <span class="map-stage-detail">Open rooftop chase with ramps and scattered routes.</span>
-                    </button>
-                    <button class="map-stage-card" data-map-id="map2">
-                        <span class="map-stage-copy">Map 2</span>
-                        <strong class="map-stage-name">Maze</strong>
-                        <span class="map-stage-detail">Lane-based corridors with clean cutoffs and fast reversals.</span>
-                    </button>
-                    <button class="map-stage-card" data-map-id="map3">
-                        <span class="map-stage-copy">Map 3</span>
-                        <strong class="map-stage-name">Courtyard</strong>
-                        <span class="map-stage-detail">Warm sandstone layers with broad center control.</span>
-                    </button>
-                    <button class="map-stage-card" data-map-id="map4">
-                        <span class="map-stage-copy">Map 4</span>
-                        <strong class="map-stage-name">Cathedral</strong>
-                        <span class="map-stage-detail">Vertical symmetry and stepped pressure from both wings.</span>
-                    </button>
-                    <button class="map-stage-card" data-map-id="map5">
-                        <span class="map-stage-copy">Map 5</span>
-                        <strong class="map-stage-name">Split Bunker</strong>
-                        <span class="map-stage-detail">Steel chambers and moving bridges that force timing.</span>
-                    </button>
+    <!-- MAIN MENU -->
+    <main id="homeScreen" class="screen active">
+        <div class="hero-container">
+            <h1 class="hero-title">The chase<br>begins here.</h1>
+            <div class="hero-actions">
+                <button id="btnHostMatch" class="btn-primary">
+                    <span class="btn-text">HOST PRIVATE MATCH</span>
+                </button>
+                <div class="join-group">
+                    <input type="text" id="joinCodeInput" placeholder="Enter Room Code" autocomplete="off" maxlength="10">
+                    <button id="btnJoinMatch" class="btn-secondary">→</button>
                 </div>
             </div>
         </div>
-    </div>
+    </main>
 
-    <div id="modeScreen" class="screen">
-        <button class="back-btn" id="backToMapBtn">← Back</button>
-        <div class="menu-shell">
-            <p class="eyebrow">Choose Entry</p>
-            <h1 class="title">TAG</h1>
-            <p class="subtitle">Your match setup is locked. Now decide whether you want to host it or enter an existing room.</p>
-            <p id="modeSummary" class="selection-summary"></p>
-            <div class="mode-grid">
-                <button id="chooseCreateBtn" class="mode-card">
-                    <span class="card-label">Host Match</span>
-                    <strong class="mode-card-title">Create Room</strong>
-                    <span class="mode-card-copy">Generate a code and wait for the rest of the lobby to fill.</span>
-                </button>
-                <button id="chooseJoinBtn" class="mode-card">
-                    <span class="card-label">Enter Match</span>
-                    <strong class="mode-card-title">Join Room</strong>
-                    <span class="mode-card-copy">Use an existing code and step straight into someone else&apos;s room.</span>
-                </button>
+    <!-- LOBBY BENTO GRID -->
+    <main id="lobbyScreen" class="screen">
+        <div class="bento-container">
+            <div class="bento-header">
+                <p class="eyebrow">ROOM CODE</p>
+                <h2 id="displayRoomCode" class="room-code-title">----</h2>
             </div>
-        </div>
-    </div>
-
-    <div id="roomScreen" class="screen">
-        <button class="back-btn" id="backToModeBtn">← Back</button>
-        <div class="menu-shell">
-            <p id="roomEyebrow" class="eyebrow">Room Setup</p>
-            <h1 class="title">TAG</h1>
-            <p id="roomSubtitle" class="subtitle">Finalize the room details below.</p>
-            <p id="roomSetupSummary" class="selection-summary"></p>
-            <div class="menu-container single-column">
-                <div class="menu-card">
-                    <span id="roomActionLabel" class="card-label">Host Match</span>
-                    <div id="createRoomPanel">
-                        <button id="createRoomBtn" class="player-btn pink">CREATE ROOM</button>
+            
+            <div class="bento-grid">
+                <!-- Map Cell -->
+                <div class="bento-cell map-cell" id="bentoMapCell">
+                    <div class="cell-content">
+                        <p class="cell-label">ARENA</p>
+                        <h3 id="displayMapName" class="cell-title">Classic</h3>
+                        <p id="displayMapDesc" class="cell-desc">Open rooftop chase with ramps.</p>
+                        
+                        <!-- Host Map Selector (Hidden if not host) -->
+                        <div id="hostMapSelector" class="host-controls hidden">
+                            <button class="arrow-btn" id="btnPrevMap">←</button>
+                            <span class="control-label">CHANGE</span>
+                            <button class="arrow-btn" id="btnNextMap">→</button>
+                        </div>
                     </div>
-                    <div id="joinRoomPanel" class="hidden">
-                        <input type="text" id="roomCodeInput" placeholder="Enter Room Code" class="room-input">
-                        <button id="joinRoomBtn" class="player-btn blue">JOIN ROOM</button>
+                    <div class="cell-bg" id="mapBgPreview"></div>
+                </div>
+
+                <!-- Players Cell -->
+                <div class="bento-cell roster-cell">
+                    <div class="cell-content">
+                        <p class="cell-label">ROSTER</p>
+                        <div id="lobbyPlayerList" class="player-list">
+                            <!-- Populated by JS -->
+                        </div>
+                        
+                        <div id="hostSizeSelector" class="host-controls hidden mt-auto">
+                            <button class="arrow-btn" id="btnSizeDown">-</button>
+                            <span class="control-label" id="displayMaxPlayers">4 PLAYERS</span>
+                            <button class="arrow-btn" id="btnSizeUp">+</button>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div id="roomCodeDisplay" class="room-code-display hidden">
-                <p>Room Code: <strong id="roomCode"></strong></p>
-                <p id="roomStatusText" class="room-status-text"></p>
-                <p id="waitingText" class="waiting-text">Waiting for players...</p>
+
+                <!-- Action Cell -->
+                <div class="bento-cell action-cell" id="bentoActionCell">
+                    <button id="btnStartGame" class="btn-massive hidden">START GAME</button>
+                    <div id="waitingForHostStatus" class="waiting-status">WAITING FOR HOST...</div>
+                </div>
             </div>
         </div>
-    </div>
+    </main>
 
-    <div id="errorMessage" class="error-message hidden"></div>
+    <!-- ERROR TOAST -->
+    <div id="errorMessage" class="error-toast hidden"></div>
 
-    <div id="gameScreen" class="screen">
+    <!-- GAME CANVAS -->
+    <main id="gameScreen" class="screen">
         <div class="hud-shell">
             <div id="gameInfo">
                 <div id="status" class="hud-chip">Role <span id="playerRole"></span></div>
@@ -117,21 +92,18 @@
             </div>
             <div id="roundBanner" class="round-banner hidden"></div>
             <canvas id="gameCanvas"></canvas>
-            <div id="controls">
-                <p>Arrow Keys to Move</p>
-                <p>Arrow Up to Jump</p>
-            </div>
+            
             <div id="gameOverScreen" class="game-over-screen hidden">
                 <div class="game-over-card">
                     <p class="game-over-label">Round Over</p>
                     <h2 id="gameOverTitle">LOSER</h2>
                     <p id="gameOverPlayer" class="game-over-player"></p>
                     <p id="gameOverMessage" class="game-over-message"></p>
-                    <button id="playAgainBtn" class="play-again-btn">PLAY AGAIN</button>
+                    <button id="playAgainBtn" class="play-again-btn">BACK TO LOBBY</button>
                 </div>
             </div>
         </div>
-    </div>
+    </main>
 
     <script src="/socket.io/socket.io.js"></script>
     <script type="module" src="js/main.js"></script>

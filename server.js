@@ -683,8 +683,9 @@ io.on('connection', (socket) => {
         };
         socket.join(roomCode);
         socket.roomCode = roomCode;
-        socket.emit('roomCreated', { roomCode, maxPlayers, roundDuration, mapId });
-        socket.emit('joined', {
+        socket.emit('roomCreated', roomCode);
+        io.to(roomCode).emit('playerListUpdate', rooms[roomCode].players);
+        socket.emit('roomJoined', {
             playerNumber: hostPlayer.number,
             roomCode,
             players: rooms[roomCode].players,
@@ -694,6 +695,17 @@ io.on('connection', (socket) => {
         });
         emitRoomStatus(roomCode);
         console.log('Room created:', roomCode);
+    });
+
+    
+    socket.on('updateRoomSettings', (settings) => {
+        if (!socket.roomCode) return;
+        const room = rooms[socket.roomCode];
+        if (room && room.players[0] && room.players[0].id === socket.id) {
+            room.maxPlayers = settings.maxPlayers;
+            room.mapId = settings.mapId;
+            socket.to(socket.roomCode).emit('roomSettingsUpdated', settings);
+        }
     });
 
     socket.on('joinRoom', (roomCode) => {
@@ -715,7 +727,7 @@ io.on('connection', (socket) => {
         
         room.players.push(playerData);
         
-        socket.emit('joined', {
+        socket.emit('roomJoined', {
             playerNumber,
             roomCode,
             players: room.players,
@@ -777,7 +789,7 @@ io.on('connection', (socket) => {
                 delete rooms[socket.roomCode];
             } else {
                 emitRoomStatus(socket.roomCode);
-                socket.to(socket.roomCode).emit('playerLeft');
+                io.to(socket.roomCode).emit('playerListUpdate', rooms[socket.roomCode].players);
             }
         }
     });
