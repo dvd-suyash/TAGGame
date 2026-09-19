@@ -8,7 +8,7 @@ import { draw } from './render.js';
 
 
 // --- History API for Browser Back Button ---
-window.history.replaceState({ screenId: 'homeScreen' }, "", "#homeScreen");
+try{window.history.replaceState({ screenId: 'homeScreen' }, "", "#homeScreen");
 window.addEventListener('popstate', (e) => {
     if (e.state && e.state.screenId) {
         setActiveScreen(e.state.screenId, false);
