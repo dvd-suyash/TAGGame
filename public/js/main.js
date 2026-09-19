@@ -43,6 +43,10 @@ if (state.gameStarted) {
 const btnHostMatch = document.getElementById('btnHostMatch');
 if (btnHostMatch) {
     btnHostMatch.addEventListener('click', () => {
+        if (!socket.connected) {
+            import('./ui.js').then(module => module.showError("Disconnected from server. Refresh the page."));
+            return;
+        }
         try {
             state.selectedMaxPlayers = 4;
             state.selectedMapId = 'map1';
