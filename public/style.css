@@ -312,7 +312,7 @@ button {
 
 /* Host Controls */
 .host-controls {
-    margin-top: 1.5rem;
+    margin-top: 0.75rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
